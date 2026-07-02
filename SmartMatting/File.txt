@@ -1,0 +1,6 @@
+[U2Net] Mask is nearly empty (fg=0.000576171875), falling back
+[BLEND] Saved debug to /Users/jiangbo/Library/Developer/CoreSimulator/Devices/1D83877F-CD23-48DE-83E1-3D06A59EE351/data/Containers/Data/Application/A923723A-70AA-4941-A1FC-0BF5C1594A6E/tmp/blend_debug.png
+[UI] Saved resultImage to /Users/jiangbo/Library/Developer/CoreSimulator/Devices/1D83877F-CD23-48DE-83E1-3D06A59EE351/data/Containers/Data/Application/A923723A-70AA-4941-A1FC-0BF5C1594A6E/tmp/resultImage.png
+[U2Net] Mask is nearly empty (fg=0.0), falling back
+[BLEND] Saved debug to /Users/jiangbo/Library/Developer/CoreSimulator/Devices/1D83877F-CD23-48DE-83E1-3D06A59EE351/data/Containers/Data/Application/A923723A-70AA-4941-A1FC-0BF5C1594A6E/tmp/blend_debug.png
+[UI] Saved resultImage to /Users/jiangbo/Library/Developer/CoreSimulator/Devices/1D83877F-CD23-48DE-83E1-3D06A59EE351/data/Containers/Data/Application/A923723A-70AA-4941-A1FC-0BF5C1594A6E/tmp/resultImage.png

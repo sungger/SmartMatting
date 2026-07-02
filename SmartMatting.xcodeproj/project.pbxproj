@@ -11,6 +11,7 @@
 		19A3B49B25E2B21751BBD798 /* DeepLab.mlmodel in Sources */ = {isa = PBXBuildFile; fileRef = 74F51F4189213193B50974D4 /* DeepLab.mlmodel */; };
 		361CD46F7C70B137B78BB049 /* U2NetUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0BE980AE566C87F7D8B5C81 /* U2NetUtils.swift */; };
 		4E23760B1ADD8A67B6880228 /* LaLabsu2netp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 634C9864E44878266556A05A /* LaLabsu2netp.swift */; };
+		6F7DF4682FF68FFD00DFEA8B /* File.txt in Resources */ = {isa = PBXBuildFile; fileRef = 6F7DF4672FF68FFD00DFEA8B /* File.txt */; };
 		A10001 /* SmartMattingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* SmartMattingApp.swift */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
 		A10003 /* MattingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* MattingEngine.swift */; };
@@ -24,7 +25,8 @@
 /* Begin PBXFileReference section */
 		5502458EDE59BD6F7FD41BF1 /* LaLabsu2netp.mlmodelc */ = {isa = PBXFileReference; lastKnownFileType = wrapper.mlmodelc; path = LaLabsu2netp.mlmodelc; sourceTree = "<group>"; };
 		634C9864E44878266556A05A /* LaLabsu2netp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaLabsu2netp.swift; sourceTree = "<group>"; };
-		74F51F4189213193B50974D4 /* DeepLab.mlmodel */ = {isa = PBXFileReference; includeInIndex = 1; path = DeepLab.mlmodel; sourceTree = "<group>"; };
+		6F7DF4672FF68FFD00DFEA8B /* File.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = File.txt; sourceTree = "<group>"; };
+		74F51F4189213193B50974D4 /* DeepLab.mlmodel */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = file.mlmodel; path = DeepLab.mlmodel; sourceTree = "<group>"; };
 		A1B2C3D4E5F6A7B8C9D0E1F2 /* IDPhotoEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IDPhotoEngine.swift; sourceTree = "<group>"; };
 		A20001 /* SmartMattingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartMattingApp.swift; sourceTree = "<group>"; };
 		A20002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -36,7 +38,7 @@
 		A20008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D0BE980AE566C87F7D8B5C81 /* U2NetUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U2NetUtils.swift; sourceTree = "<group>"; };
 		DAA7B50755034D72808CB016 /* RMBG_1_4.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper.mlpackage; path = RMBG_1_4.mlpackage; sourceTree = "<group>"; };
-		E5305ABA7A2071F35CCF14DE /* U2Net.mlpackage */ = {isa = PBXFileReference; includeInIndex = 1; path = U2Net.mlpackage; sourceTree = "<group>"; };
+		E5305ABA7A2071F35CCF14DE /* U2Net.mlpackage */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = folder.mlpackage; path = U2Net.mlpackage; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -54,6 +56,7 @@
 				A20001 /* SmartMattingApp.swift */,
 				A20002 /* ContentView.swift */,
 				A20003 /* MattingEngine.swift */,
+				6F7DF4672FF68FFD00DFEA8B /* File.txt */,
 				A1B2C3D4E5F6A7B8C9D0E1F2 /* IDPhotoEngine.swift */,
 				634C9864E44878266556A05A /* LaLabsu2netp.swift */,
 				5502458EDE59BD6F7FD41BF1 /* LaLabsu2netp.mlmodelc */,
@@ -129,6 +132,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6F7DF4682FF68FFD00DFEA8B /* File.txt in Resources */,
 				A10006 /* Assets.xcassets in Resources */,
 				12DCD436ECF3D5B21F76440E /* LaLabsu2netp.mlmodelc in Resources */,
 				AD8029E9900746399E839124 /* RMBG_1_4.mlpackage in Resources */,

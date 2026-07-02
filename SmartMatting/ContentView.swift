@@ -1,5 +1,6 @@
 import SwiftUI
 import PhotosUI
+import Photos
 
 struct ContentView: View {
     @State private var selectedItem: PhotosPickerItem?
@@ -838,11 +839,9 @@ struct ContentView: View {
             await MainActor.run {
                 foregroundImage = fg
                 resultImage = synthesizeResult(foreground: fg, background: selectedBackground)
-                // DEBUG: 保存 resultImage
-                if let ri = resultImage, let data = ri.pngData() {
-                    let path = NSTemporaryDirectory() + "resultImage.png"
-                    try? data.write(to: URL(fileURLWithPath: path))
-                    print("[UI] Saved resultImage to \(path)")
+                // 锁定 alpha
+                if let ri = resultImage, let data = ri.pngData(), let locked = UIImage(data: data) {
+                    resultImage = locked
                 }
                 isProcessing = false
             }
@@ -912,7 +911,10 @@ struct ContentView: View {
         default:
             // 透明背景：直接返回前景图（已带透明通道）
             if option == .transparent {
-                // 直接返回 fg，避免 UIImage 重建丢失 alpha
+                // PNG 锁定，确保 alpha 不丢失
+                if let data = fg.pngData(), let locked = UIImage(data: data) {
+                    return locked
+                }
                 return fg
             }
 
@@ -985,21 +987,46 @@ struct ContentView: View {
     func autoRefineMask() {
         guard let mask = MattingEngine.lastMaskImage,
               let maskCI = CIImage(image: mask),
-              let original = originalImage else { return }
+              let original = originalImage else {
+            saveMessage = "自动精修失败：缺少遮罩数据"
+            showSaveAlert = true
+            return
+        }
 
         guard let refinedMask = MattingEngine.autoRefineMask(maskCI),
-              let refinedMaskCG = CIContext().createCGImage(refinedMask, from: refinedMask.extent) else { return }
+              let refinedMaskCG = CIContext().createCGImage(refinedMask, from: refinedMask.extent) else {
+            saveMessage = "自动精修失败：遮罩处理出错"
+            showSaveAlert = true
+            return
+        }
 
         let refinedMaskImage = UIImage(cgImage: refinedMaskCG)
 
         // 用精修后的遮罩重新合成
-        guard let origCG = original.cgImage else { return }
+        guard let origCG = original.cgImage else {
+            saveMessage = "自动精修失败：原图数据异常"
+            showSaveAlert = true
+            return
+        }
         let origCI = CIImage(cgImage: origCG)
 
         // CPU 逐像素合成
-        guard let result = blendWithMaskCPU(image: origCI, mask: refinedMask) else { return }
+        guard let result = blendWithMaskCPU(image: origCI, mask: refinedMask) else {
+            saveMessage = "自动精修失败：合成出错"
+            showSaveAlert = true
+            return
+        }
         resultImage = UIImage(cgImage: result)
+        // 更新 lastResultCGImage 以便保存
+        MattingEngine.lastResultCGImage = result
+        // 锁定 alpha
+        if let data = resultImage?.pngData(), let locked = UIImage(data: data) {
+            resultImage = locked
+        }
         MattingEngine.lastMaskImage = refinedMaskImage
+        
+        saveMessage = "自动精修完成 ✅"
+        showSaveAlert = true
     }
 
     /// CPU 逐像素合成：把遮罩灰度值写入 alpha 通道
@@ -1033,9 +1060,31 @@ struct ContentView: View {
     }
 
     func saveToAlbum() {
-        guard let image = resultImage else { return }
-        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-        saveMessage = "已保存到相册"
+        // 优先用 segmentPerson 保存的原始 CGImage
+        let cgImage: CGImage? = MattingEngine.lastResultCGImage ?? resultImage?.cgImage
+        guard let cg = cgImage else {
+            saveMessage = "保存失败"
+            showSaveAlert = true
+            return
+        }
+
+        // 用 CGImageDestination 直接从 CGImage 写 PNG
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, "public.png" as CFString, 1, nil) else {
+            saveMessage = "保存失败"
+            showSaveAlert = true
+            return
+        }
+        CGImageDestinationAddImage(dest, cg, nil)
+        guard CGImageDestinationFinalize(dest) else {
+            saveMessage = "保存失败"
+            showSaveAlert = true
+            return
+        }
+
+        let docsPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
+        try? (data as Data).write(to: URL(fileURLWithPath: docsPath + "/saved_transparent.png"))
+        saveMessage = "已保存"
         showSaveAlert = true
     }
 

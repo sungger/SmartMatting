@@ -23,6 +23,9 @@ final class MattingEngine: @unchecked Sendable {
     /// 最近一次生成的遮罩(供精修使用)
     static var lastMaskImage: UIImage?
 
+    /// 最近一次抠图结果的原始 CGImage（用于保存，绕过 UIImage alpha 丢失问题）
+    static var lastResultCGImage: CGImage?
+
     /// DeepLabV3 模型(懒加载)
     private static let deeplabModel: DeepLab = {
         let config = MLModelConfiguration()
@@ -32,7 +35,7 @@ final class MattingEngine: @unchecked Sendable {
 
     /// U2Net 模型(懒加载)
     private static let u2netModel: MLModel? = {
-        guard let url = Bundle.main.url(forResource: "U2Net", withExtension: "mlpackage") else {
+        guard let url = Bundle.main.url(forResource: "U2Net", withExtension: "mlmodelc") else {
             print("[U2Net] Model not found")
             return nil
         }
@@ -144,13 +147,15 @@ final class MattingEngine: @unchecked Sendable {
             throw MattingError.processingFailed
         }
 
-        // 5. 缩回原图尺寸
-        var maskCI = CIImage(cgImage: maskCG)
+        // 5. 缩回原图尺寸（用 CGContext 精确缩放）
+        guard let scaledMaskCG = resizeCGImage(maskCG, width: w, height: h) else {
+            throw MattingError.processingFailed
+        }
+        var maskCI = CIImage(cgImage: scaledMaskCG)
         let rScale = max(1, CGFloat(max(w, h)) / 1024)
 
-        // 6. 二值化 + 距离变换填孔 + 移除小区域 + 羽化
+        // 6. 二值化 + 羽化（跳过 fillInteriorHoles，它太激进会把帽子区域也填为前景）
         if let binarized = binarizeMask(maskCI) { maskCI = binarized }
-        if let filled = fillInteriorHoles(maskCI) { maskCI = filled }
         if let cleaned = removeSmallForegroundRegions(maskCI) { maskCI = cleaned }
         if let b = featherMask(maskCI, radius: 0.5 * rScale) { maskCI = b }
 
@@ -185,8 +190,8 @@ final class MattingEngine: @unchecked Sendable {
             throw MattingError.processingFailed
         }
 
-        // 2. 转成 CVPixelBuffer(320x320, RGB)
-        guard let pixelBuffer = cgImageToPixelBuffer(resizedCG, width: scaledW, height: scaledH) else {
+        // 2. 转成 Float32 CVPixelBuffer(U2Net 需要归一化到 [0,1])
+        guard let pixelBuffer = cgImageToFloat32PixelBuffer(resizedCG, width: scaledW, height: scaledH) else {
             throw MattingError.processingFailed
         }
 
@@ -206,16 +211,35 @@ final class MattingEngine: @unchecked Sendable {
             throw MattingError.processingFailed
         }
 
+        // 检查遮罩是否有效(全黑说明模型输出无效)
+        guard let maskData = maskCG.dataProvider?.data,
+              let maskBytes = CFDataGetBytePtr(maskData) else {
+            throw MattingError.processingFailed
+        }
+        let maskCount = scaledW * scaledH
+        var fgCount = 0
+        for i in 0..<maskCount {
+            if maskBytes[i] > 10 { fgCount += 1 }
+        }
+        let fgRatio = Double(fgCount) / Double(maskCount)
+        if fgRatio < 0.01 {
+            print("[U2Net] Mask is nearly empty (fg=\(fgRatio)), falling back")
+            throw MattingError.processingFailed
+        }
+        print("[U2Net] Mask fg ratio: \(String(format: "%.2f", fgRatio))")
+
         // 5. 缩回原图尺寸
         var maskCI = CIImage(cgImage: maskCG)
-        let rScale = max(1, CGFloat(max(w, h)) / 1024)
+        maskCI = maskCI.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / CGFloat(scaledW),
+                                                           y: CGFloat(h) / CGFloat(scaledH)))
+        let rScale2 = max(1, CGFloat(max(w, h)) / 1024)
 
         // 6. 二值化 + 填孔 + 移除小区域 + 颜色清理 + 羽化
         if let binarized = binarizeMask(maskCI) { maskCI = binarized }
         if let filled = fillInteriorHoles(maskCI) { maskCI = filled }
         if let cleaned = removeSmallForegroundRegions(maskCI) { maskCI = cleaned }
         if let colorCleaned = cleanMaskByColor(maskCI, sourceImage: CIImage(cgImage: safeCG)) { maskCI = colorCleaned }
-        if let b = featherMask(maskCI, radius: 0.5 * rScale) { maskCI = b }
+        if let b = featherMask(maskCI, radius: 0.5 * rScale2) { maskCI = b }
 
         if let maskCG = sharedContext.createCGImage(maskCI, from: maskCI.extent) {
             lastMaskImage = UIImage(cgImage: maskCG)
@@ -301,6 +325,47 @@ final class MattingEngine: @unchecked Sendable {
         return Float(bitPattern: float32Bits)
     }
 
+    /// CGImage → Float32 CVPixelBuffer(归一化到 [0,1])
+    private static func cgImageToFloat32PixelBuffer(_ cgImage: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
+        var pixelBuffer: CVPixelBuffer?
+        let attrs: [String: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey as String: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey as String: true
+        ]
+        CVPixelBufferCreate(kCFAllocatorDefault, width, height,
+            kCVPixelFormatType_32ARGB, attrs as CFDictionary, &pixelBuffer)
+        guard let buffer = pixelBuffer else { return nil }
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+
+        // 先画到 8-bit context 再读取像素
+        guard let ctx8 = CGContext(data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx8.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let srcData = ctx8.data else { return nil }
+        let src = srcData.bindMemory(to: UInt8.self, capacity: width * height * 4)
+
+        // 写入 Float32 buffer
+        let dst = CVPixelBufferGetBaseAddress(buffer)!.bindMemory(to: Float.self, capacity: width * height * 4)
+        let dstBPR = CVPixelBufferGetBytesPerRow(buffer) / 4
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let si = y * width * 4 + x * 4
+                let di = y * dstBPR + x * 4
+                dst[di + 1] = Float(src[si]) / 255.0      // R
+                dst[di + 2] = Float(src[si + 1]) / 255.0  // G
+                dst[di + 3] = Float(src[si + 2]) / 255.0  // B
+                dst[di + 0] = 1.0                           // A
+            }
+        }
+
+        return buffer
+    }
+
     /// CGImage → CVPixelBuffer
     private static func cgImageToPixelBuffer(_ cgImage: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
@@ -323,12 +388,16 @@ final class MattingEngine: @unchecked Sendable {
         return buffer
     }
 
-    /// 缩放 CGImage
+    /// 缩放 CGImage（保持原始色彩空间和 alpha 信息）
     private static func resizeCGImage(_ cgImage: CGImage, width: Int, height: Int) -> CGImage? {
+        let colorSpace = cgImage.colorSpace ?? CGColorSpaceCreateDeviceRGB()
+        let alphaInfo = cgImage.alphaInfo
+        let bpp = cgImage.bitsPerPixel
+        let bpr = (bpp / 8) * width
+        let bitmapInfo = CGBitmapInfo(rawValue: alphaInfo.rawValue)
         guard let ctx = CGContext(data: nil, width: width, height: height,
-            bitsPerComponent: 8, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            bitsPerComponent: 8, bytesPerRow: bpr,
+            space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else { return nil }
         ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         return ctx.makeImage()
     }
@@ -356,13 +425,16 @@ final class MattingEngine: @unchecked Sendable {
 
         // 优先 Apple Vision 前景分割(iOS 17+) → U2Net → DeepLabV3 → RMBG1.4 回退
         if let fg = try? foregroundSegment(cgImage, feather: feather) {
-            return fixOrientation(fg, to: image.imageOrientation)
+            let result = lockPNG(fixOrientation(fg, to: image.imageOrientation))
+            return result
         }
         if let fg = try? u2netSegment(cgImage, feather: feather) {
-            return fixOrientation(fg, to: image.imageOrientation)
+            let result = lockPNG(fixOrientation(fg, to: image.imageOrientation))
+            return result
         }
         if let fg = try? deeplabSegment(cgImage, feather: feather) {
-            return fixOrientation(fg, to: image.imageOrientation)
+            let result = lockPNG(fixOrientation(fg, to: image.imageOrientation))
+            return result
         }
 
         let originalSize = CGSize(width: cgImage.width, height: cgImage.height)
@@ -377,7 +449,6 @@ final class MattingEngine: @unchecked Sendable {
 
         // 用 letterbox 图片推理,得到 1024×1024 遮罩
         let mask1024 = try rmbgMask(for: image)
-        lastMaskImage = mask1024
 
         // 从 1024×1024 遮罩中裁剪出有效区域(去掉黑边)
         guard let maskCG = mask1024.cgImage,
@@ -396,7 +467,14 @@ final class MattingEngine: @unchecked Sendable {
         if let cleaned = removeSmallForegroundRegions(maskCI, minArea: 500) { maskCI = cleaned }
         if let b = featherMask(maskCI, radius: 0.5 * rScale) { maskCI = b }
 
-        guard let finalMaskCG = sharedContext.createCGImage(maskCI, from: CGRect(origin: .zero, size: originalSize)) else {
+        // 设置 lastMaskImage（原图尺寸）
+        var finalMaskCG: CGImage?
+        if let fmcg = sharedContext.createCGImage(maskCI, from: CGRect(origin: .zero, size: originalSize)) {
+            lastMaskImage = UIImage(cgImage: fmcg)
+            finalMaskCG = fmcg
+        }
+
+        guard let finalMaskCG = finalMaskCG else {
             throw MattingError.processingFailed
         }
 
@@ -406,14 +484,9 @@ final class MattingEngine: @unchecked Sendable {
         let result = try blend(CIImage(cgImage: cgImage), mask: CIImage(cgImage: finalMaskCG), featherRadius: feather)
         print("[RMBG] result size=\(result.size), cgImage=\(result.cgImage != nil)")
 
-        // DEBUG: 保存 segmentPerson 最终输出
-        if let data = result.pngData() {
-            let path = NSTemporaryDirectory() + "segment_final.png"
-            try? data.write(to: URL(fileURLWithPath: path))
-            print("[RMBG] Saved segment_final to \(path)")
-        }
-
-        return fixOrientation(result, to: image.imageOrientation)
+        // 把结果转 PNG 再转回 UIImage，锁定正确的像素数据
+        let finalResult = lockPNG(fixOrientation(result, to: image.imageOrientation))
+        return finalResult
     }
 
     /// 使用 RMBG1.4 模型生成遮罩(1024×1024,专为背景移除优化)
@@ -516,26 +589,6 @@ final class MattingEngine: @unchecked Sendable {
             else { blackCount += 1 }
         }
         print("[RMBG] Mask value range: \(minVal) ~ \(maxVal), white=\(whiteCount) black=\(blackCount)")
-
-        // DEBUG: 采样遮罩中心和顶部区域
-        let cx = 512, cy = 512
-        var centerVals: [Float] = []
-        for dy in -5...5 {
-            for dx in -5...5 {
-                let idx = (cy + dy) * 1024 + (cx + dx)
-                centerVals.append(Float(ptr[idx]))
-            }
-        }
-        print("[RMBG] Center 11x11 mask mean: \(centerVals.reduce(0,+) / Float(centerVals.count))")
-
-        // 采样顶部区域(帽子)
-        var topVals: [Float] = []
-        for y in 0..<50 {
-            for x in 300..<700 {
-                topVals.append(Float(ptr[y * 1024 + x]))
-            }
-        }
-        print("[RMBG] Top region mask mean: \(topVals.reduce(0,+) / Float(topVals.count))")
 
         let colorSpace = CGColorSpaceCreateDeviceGray()
         guard let provider = CGDataProvider(data: NSData(bytes: &grayPixels, length: grayCount)),
@@ -1304,6 +1357,10 @@ final class MattingEngine: @unchecked Sendable {
             throw MattingError.processingFailed
         }
 
+        // 先填充白色不透明背景（否则 premultiplied 会导致 RGB 被清零）
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+
         // 绘制原图
         ctx.draw(imageCG, in: CGRect(x: 0, y: 0, width: w, height: h))
         guard let rgbData = ctx.data else { throw MattingError.processingFailed }
@@ -1328,14 +1385,15 @@ final class MattingEngine: @unchecked Sendable {
 
         guard let resultCG = ctx.makeImage() else { throw MattingError.processingFailed }
 
-        // DEBUG
-        if let data = UIImage(cgImage: resultCG).pngData() {
-            let path = NSTemporaryDirectory() + "blend_debug.png"
-            try? data.write(to: URL(fileURLWithPath: path))
-            print("[BLEND] Saved debug to \(path)")
-        }
+        // 保存原始 CGImage（避免 UIImage 丢失 alpha）
+        lastResultCGImage = resultCG
 
-        return UIImage(cgImage: resultCG, scale: 1, orientation: .up)
+        // 转 PNG 再转回，锁定 alpha 通道
+        let rawImage = UIImage(cgImage: resultCG, scale: 1, orientation: .up)
+        if let pngData = rawImage.pngData(), let locked = UIImage(data: pngData) {
+            return locked
+        }
+        return rawImage
     }
 
     static func morph(_ image: CIImage, r: CGFloat, dilate: Bool) -> CIImage? {
@@ -1360,6 +1418,14 @@ final class MattingEngine: @unchecked Sendable {
     static func exportAsPNG(_ image: UIImage) -> Data? { image.pngData() }
 
     /// 把结果图的方向修正为和原图一致
+    /// 把 UIImage 转 PNG data 再转回来，锁定正确的像素数据
+    private static func lockPNG(_ image: UIImage) -> UIImage {
+        if let data = image.pngData(), let locked = UIImage(data: data) {
+            return locked
+        }
+        return image
+    }
+
     private static func fixOrientation(_ image: UIImage, to orientation: UIImage.Orientation) -> UIImage {
         guard orientation != .up, let cg = image.cgImage else { return image }
         return UIImage(cgImage: cg, scale: image.scale, orientation: orientation)
