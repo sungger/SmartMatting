@@ -193,10 +193,10 @@ final class MattingEngine: @unchecked Sendable {
         guard let data = ctx.data else { return nil }
         let pixels = data.bindMemory(to: UInt8.self, capacity: width * height)
 
-        // DeepLabV3 类别 0=背景, 1-20=前景物体
-        // 非背景类 → 前景(255)
+        // DeepLabV3 类别: 15=人(person), 0=背景
+        // 只保留"人"类别作为前景
         for i in 0..<(width * height) {
-            pixels[i] = ptr[i] > 0 ? 255 : 0
+            pixels[i] = ptr[i] == 15 ? 255 : 0
         }
         return ctx.makeImage()
     }
@@ -204,8 +204,11 @@ final class MattingEngine: @unchecked Sendable {
     static func segmentPerson(in image: UIImage, feather: Double = 1.5) async throws -> UIImage {
         let cgImage = try prepareCGImage(from: image)
 
-        // 优先 Apple Vision 前景分割(iOS 17+) → RMBG1.4 回退
+        // 优先 Apple Vision 前景分割(iOS 17+) → DeepLabV3 → RMBG1.4 回退
         if let fg = try? foregroundSegment(cgImage, feather: feather) {
+            return fixOrientation(fg, to: image.imageOrientation)
+        }
+        if let fg = try? deeplabSegment(cgImage, feather: feather) {
             return fixOrientation(fg, to: image.imageOrientation)
         }
 
