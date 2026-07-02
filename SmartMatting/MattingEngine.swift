@@ -558,11 +558,7 @@ final class MattingEngine: @unchecked Sendable {
         let originalSize = CGSize(width: w, height: h)
 
         // 方案 B：RMBG1.4（高质量边缘）+ U2Net（帽子识别）融合
-        // 先尝试 Apple Vision 快速路径
-        if let fg = try? foregroundSegment(cgImage, feather: feather) {
-            let result = lockPNG(fixOrientation(fg, to: image.imageOrientation))
-            return result
-        }
+        // 跳过 Apple Vision（会误删帽子等配饰），直接走 RMBG1.4 + U2Net 融合
 
         // 1. 计算 letterbox 参数
         let inputSize: CGFloat = 1024
