@@ -423,12 +423,12 @@ final class MattingEngine: @unchecked Sendable {
     static func segmentPerson(in image: UIImage, feather: Double = 1.5) async throws -> UIImage {
         let cgImage = try prepareCGImage(from: image)
 
-        // 优先 Apple Vision 前景分割(iOS 17+) → U2Net → DeepLabV3 → RMBG1.4 回退
-        if let fg = try? foregroundSegment(cgImage, feather: feather) {
+        // 优先 U2Net（对帽子等配饰处理最好）→ Apple Vision → DeepLabV3 → RMBG1.4 回退
+        if let fg = try? u2netSegment(cgImage, feather: feather) {
             let result = lockPNG(fixOrientation(fg, to: image.imageOrientation))
             return result
         }
-        if let fg = try? u2netSegment(cgImage, feather: feather) {
+        if let fg = try? foregroundSegment(cgImage, feather: feather) {
             let result = lockPNG(fixOrientation(fg, to: image.imageOrientation))
             return result
         }
