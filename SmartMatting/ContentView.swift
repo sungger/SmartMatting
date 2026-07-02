@@ -119,6 +119,14 @@ struct ContentView: View {
                                     .accessibilityHint("回到选图页面")
 
                                     Button {
+                                        autoRefineMask()
+                                    } label: {
+                                        Label("自动", systemImage: "wand.and.stars")
+                                    }
+                                    .accessibilityLabel("自动精修")
+                                    .accessibilityHint("自动清理帽子等边缘残留")
+
+                                    Button {
                                         showRefine = true
                                     } label: {
                                         Label("精修", systemImage: "paintbrush")
@@ -972,6 +980,56 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    func autoRefineMask() {
+        guard let mask = MattingEngine.lastMaskImage,
+              let maskCI = CIImage(image: mask),
+              let original = originalImage else { return }
+
+        guard let refinedMask = MattingEngine.autoRefineMask(maskCI),
+              let refinedMaskCG = CIContext().createCGImage(refinedMask, from: refinedMask.extent) else { return }
+
+        let refinedMaskImage = UIImage(cgImage: refinedMaskCG)
+
+        // 用精修后的遮罩重新合成
+        guard let origCG = original.cgImage else { return }
+        let origCI = CIImage(cgImage: origCG)
+
+        // CPU 逐像素合成
+        guard let result = blendWithMaskCPU(image: origCI, mask: refinedMask) else { return }
+        resultImage = UIImage(cgImage: result)
+        MattingEngine.lastMaskImage = refinedMaskImage
+    }
+
+    /// CPU 逐像素合成：把遮罩灰度值写入 alpha 通道
+    private func blendWithMaskCPU(image: CIImage, mask: CIImage) -> CGImage? {
+        let ctx = CIContext()
+        guard let cgImage = ctx.createCGImage(image, from: image.extent),
+              let cgMask = ctx.createCGImage(mask, from: mask.extent) else { return nil }
+
+        let w = cgImage.width, h = cgImage.height
+        guard let imgCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        imgCtx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        guard let maskCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        maskCtx.draw(cgMask, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        guard let imgData = imgCtx.data, let maskData = maskCtx.data else { return nil }
+        let imgPixels = imgData.bindMemory(to: UInt8.self, capacity: w * h * 4)
+        let maskPixels = maskData.bindMemory(to: UInt8.self, capacity: w * h)
+
+        for i in 0..<(w * h) {
+            imgPixels[i * 4 + 3] = maskPixels[i]
+        }
+
+        return imgCtx.makeImage()
     }
 
     func saveToAlbum() {

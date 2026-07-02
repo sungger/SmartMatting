@@ -210,10 +210,11 @@ final class MattingEngine: @unchecked Sendable {
         var maskCI = CIImage(cgImage: maskCG)
         let rScale = max(1, CGFloat(max(w, h)) / 1024)
 
-        // 6. 二值化 + 填孔 + 移除小区域 + 羽化
+        // 6. 二值化 + 填孔 + 移除小区域 + 颜色清理 + 羽化
         if let binarized = binarizeMask(maskCI) { maskCI = binarized }
         if let filled = fillInteriorHoles(maskCI) { maskCI = filled }
         if let cleaned = removeSmallForegroundRegions(maskCI) { maskCI = cleaned }
+        if let colorCleaned = cleanMaskByColor(maskCI, sourceImage: CIImage(cgImage: safeCG)) { maskCI = colorCleaned }
         if let b = featherMask(maskCI, radius: 0.5 * rScale) { maskCI = b }
 
         if let maskCG = sharedContext.createCGImage(maskCI, from: maskCI.extent) {
@@ -225,16 +226,30 @@ final class MattingEngine: @unchecked Sendable {
     }
 
     /// U2Net 输出 → 二值遮罩 CGImage
-    /// U2Net 输出是 Float32,值域 [-1,1] 或 [0,1],需要归一化到 [0,255]
+    /// U2Net 输出是 Float16,值域 [-1,1] 或 [0,1],需要归一化到 [0,255]
     private static func u2netOutputToMask(_ mlMultiArray: MLMultiArray, width: Int, height: Int) -> CGImage? {
         let count = width * height
-        let ptr = mlMultiArray.dataPointer.bindMemory(to: Float.self, capacity: count)
+
+        // FLOAT16 输出: 用 Float16 读取(CoreML 的 FLOAT16 在内存中是 16-bit)
+        // 先转成 Float 数组方便处理
+        var floatValues = [Float](repeating: 0, count: count)
+        if mlMultiArray.dataType == .float16 {
+            let ptr16 = mlMultiArray.dataPointer.bindMemory(to: UInt16.self, capacity: count)
+            for i in 0..<count {
+                floatValues[i] = Float16ToFloat(ptr16[i])
+            }
+        } else {
+            let ptr32 = mlMultiArray.dataPointer.bindMemory(to: Float.self, capacity: count)
+            for i in 0..<count {
+                floatValues[i] = ptr32[i]
+            }
+        }
 
         // 先找 min/max 来归一化
         var minVal: Float = .infinity
         var maxVal: Float = -.infinity
         for i in 0..<count {
-            let v = ptr[i]
+            let v = floatValues[i]
             if v < minVal { minVal = v }
             if v > maxVal { maxVal = v }
         }
@@ -249,10 +264,41 @@ final class MattingEngine: @unchecked Sendable {
         let pixels = data.bindMemory(to: UInt8.self, capacity: count)
 
         for i in 0..<count {
-            let normalized = (ptr[i] - minVal) / safeRange
+            let normalized = (floatValues[i] - minVal) / safeRange
             pixels[i] = UInt8(min(max(normalized * 255, 0), 255))
         }
         return ctx.makeImage()
+    }
+
+    /// Float16 (UInt16 bits) → Float32
+    private static func Float16ToFloat(_ bits: UInt16) -> Float {
+        let sign = UInt32((bits >> 15) & 1)
+        let exp = UInt32((bits >> 10) & 0x1F)
+        let mant = UInt32(bits & 0x3FF)
+
+        let float32Bits: UInt32
+        if exp == 0 {
+            if mant == 0 {
+                float32Bits = sign << 31  // zero
+            } else {
+                // subnormal
+                var e: Int32 = -14
+                var m = mant
+                while (m & 0x400) == 0 {
+                    m <<= 1
+                    e -= 1
+                }
+                m &= 0x3FF
+                let fExp = UInt32(e + 127) & 0xFF
+                float32Bits = (sign << 31) | (fExp << 23) | (m << 13)
+            }
+        } else if exp == 31 {
+            float32Bits = (sign << 31) | (0xFF << 23) | (mant << 13)  // inf/nan
+        } else {
+            let fExp = UInt32(Int32(exp) - 15 + 127) & 0xFF
+            float32Bits = (sign << 31) | (fExp << 23) | (mant << 13)
+        }
+        return Float(bitPattern: float32Bits)
     }
 
     /// CGImage → CVPixelBuffer
@@ -880,6 +926,144 @@ final class MattingEngine: @unchecked Sendable {
         guard removed > 0, let result = ctx.makeImage() else { return mask }
         print("[CleanUp] Removed \(removed) pixels from \(regions.count) regions (maxArea=\(maxArea))")
         return CIImage(cgImage: result)
+    }
+
+    /// 基于背景色清理遮罩：取样图片四个角的背景色，
+    /// 对遮罩中被误判为前景的像素，如果颜色接近背景色则归为背景
+    /// 自动精修遮罩：基于水平投影分析，裁剪顶部帽子残留
+    /// 找到前景宽度超过 50% 的行作为主体开始位置，之前的前景全部擦除
+    static func autoRefineMask(_ mask: CIImage) -> CIImage? {
+        guard let cgMask = sharedContext.createCGImage(mask, from: mask.extent) else { return nil }
+        let w = cgMask.width, h = cgMask.height
+        let totalPixels = w * h
+
+        guard let ctx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        ctx.draw(cgMask, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: totalPixels)
+
+        // 1. 计算每行的前景像素数
+        var rowCounts = [Int](repeating: 0, count: h)
+        for y in 0..<h {
+            var count = 0
+            for x in 0..<w {
+                if pixels[y * w + x] > 128 { count += 1 }
+            }
+            rowCounts[y] = count
+        }
+
+        // 2. 找到主体开始位置（前景宽度 > 50%）
+        let halfW = w / 2
+        var bodyStart = h
+        for y in 0..<h {
+            if rowCounts[y] > halfW {
+                bodyStart = y
+                break
+            }
+        }
+
+        // 3. 找到主体实心位置（前景宽度 > 80%）
+        let solidW = w * 80 / 100
+        var bodySolid = h
+        for y in bodyStart..<h {
+            if rowCounts[y] > solidW {
+                bodySolid = y
+                break
+            }
+        }
+
+        // 4. 擦除 bodyStart 之前的所有前景
+        for y in 0..<bodyStart {
+            for x in 0..<w {
+                pixels[y * w + x] = 0
+            }
+        }
+
+        // 5. 在 bodyStart 和 bodySolid 之间，只保留宽的前景区域
+        let minWidth = w * 60 / 100
+        for y in bodyStart..<bodySolid {
+            if rowCounts[y] < minWidth {
+                for x in 0..<w {
+                    pixels[y * w + x] = 0
+                }
+            }
+        }
+
+        guard let resultCG = ctx.makeImage() else { return nil }
+        return CIImage(cgImage: resultCG)
+    }
+
+    private static func cleanMaskByColor(_ mask: CIImage, sourceImage: CIImage) -> CIImage? {
+        guard let cgMask = sharedContext.createCGImage(mask, from: mask.extent),
+              let cgSource = sharedContext.createCGImage(sourceImage, from: sourceImage.extent) else { return nil }
+
+        let w = cgMask.width, h = cgMask.height
+        let totalPixels = w * h
+
+        // 读取遮罩和原图数据
+        guard let maskCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue),
+            let srcCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+
+        maskCtx.draw(cgMask, in: CGRect(x: 0, y: 0, width: w, height: h))
+        srcCtx.draw(cgSource, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+        guard let maskData = maskCtx.data, let srcData = srcCtx.data else { return nil }
+        let maskPixels = maskData.bindMemory(to: UInt8.self, capacity: totalPixels)
+        let srcPixels = srcData.bindMemory(to: UInt8.self, capacity: totalPixels * 4)
+
+        // 取样四个角的背景色（取 10x10 区域）
+        let cornerSize = 10
+        var bgR: Float = 0, bgG: Float = 0, bgB: Float = 0
+        var cornerCount: Float = 0
+
+        let corners: [(Int, Int)] = [(0, 0), (0, h - cornerSize), (w - cornerSize, 0), (w - cornerSize, h - cornerSize)]
+        for (cx, cy) in corners {
+            for dy in 0..<cornerSize {
+                for dx in 0..<cornerSize {
+                    let idx = ((cy + dy) * w + (cx + dx)) * 4
+                    bgR += Float(srcPixels[idx])
+                    bgG += Float(srcPixels[idx + 1])
+                    bgB += Float(srcPixels[idx + 2])
+                    cornerCount += 1
+                }
+            }
+        }
+        bgR /= cornerCount
+        bgG /= cornerCount
+        bgB /= cornerCount
+
+        // 对顶部 30% 区域做颜色清理
+        let topLimit = h * 30 / 100
+        for y in 0..<topLimit {
+            for x in 0..<w {
+                let mi = y * w + x
+                if maskPixels[mi] > 77 { // alpha > 0.3 → 被模型判为前景
+                    let si = mi * 4
+                    let r = Float(srcPixels[si])
+                    let g = Float(srcPixels[si + 1])
+                    let b = Float(srcPixels[si + 2])
+
+                    let dr = r - bgR, dg = g - bgG, db = b - bgB
+                    let dist = sqrt(dr * dr + dg * dg + db * db)
+
+                    if dist < 80 { // 颜色接近背景色
+                        maskPixels[mi] = 0
+                    }
+                }
+            }
+        }
+
+        guard let resultCG = maskCtx.makeImage() else { return nil }
+        return CIImage(cgImage: resultCG)
     }
 
     /// 自动清理遮罩边缘的灰色不确定区域
