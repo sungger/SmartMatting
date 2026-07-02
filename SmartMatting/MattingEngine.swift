@@ -234,11 +234,10 @@ final class MattingEngine: @unchecked Sendable {
                                                            y: CGFloat(h) / CGFloat(scaledH)))
         let rScale2 = max(1, CGFloat(max(w, h)) / 1024)
 
-        // 6. 二值化 + 填孔 + 移除小区域 + 颜色清理 + 羽化
+        // 6. 二值化 + 填孔 + 移除小区域 + 羽化（跳过 cleanMaskByColor，U2Net 对帽子等配饰识别准确，颜色清理会误删帽子）
         if let binarized = binarizeMask(maskCI) { maskCI = binarized }
         if let filled = fillInteriorHoles(maskCI) { maskCI = filled }
         if let cleaned = removeSmallForegroundRegions(maskCI) { maskCI = cleaned }
-        if let colorCleaned = cleanMaskByColor(maskCI, sourceImage: CIImage(cgImage: safeCG)) { maskCI = colorCleaned }
         if let b = featherMask(maskCI, radius: 0.5 * rScale2) { maskCI = b }
 
         if let maskCG = sharedContext.createCGImage(maskCI, from: maskCI.extent) {
