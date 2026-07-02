@@ -30,6 +30,17 @@ final class MattingEngine: @unchecked Sendable {
         return try! DeepLab(configuration: config)
     }()
 
+    /// U2Net 模型(懒加载)
+    private static let u2netModel: MLModel? = {
+        guard let url = Bundle.main.url(forResource: "U2Net", withExtension: "mlpackage") else {
+            print("[U2Net] Model not found")
+            return nil
+        }
+        let config = MLModelConfiguration()
+        config.computeUnits = .cpuAndNeuralEngine
+        return try? MLModel(contentsOf: url, configuration: config)
+    }()
+
     // MARK: - DeepLabV3 语义分割抠图
 
     /// 使用 VNGenerateForegroundInstanceMaskRequest 进行前景分割(iOS 26+)
@@ -151,6 +162,99 @@ final class MattingEngine: @unchecked Sendable {
         return try blend(ciImage, mask: maskCI, featherRadius: feather)
     }
 
+    // MARK: - U2Net 通用抠图
+
+    /// 使用 U2Net 模型抠图(320x320 输入,输出灰度遮罩)
+    static func u2netSegment(_ cgImage: CGImage, feather: Double = 1.5) throws -> UIImage {
+        guard let model = u2netModel else {
+            throw MattingError.processingFailed
+        }
+
+        let w = cgImage.width, h = cgImage.height
+        guard let safeCG = ensureReadableCGImage(cgImage) else {
+            throw MattingError.processingFailed
+        }
+
+        // 1. 缩放到 320x320(U2Net 输入尺寸)
+        let targetSize = 320
+        let scale = CGFloat(targetSize) / CGFloat(max(w, h))
+        let scaledW = Int(CGFloat(w) * scale)
+        let scaledH = Int(CGFloat(h) * scale)
+
+        guard let resizedCG = resizeCGImage(safeCG, width: scaledW, height: scaledH) else {
+            throw MattingError.processingFailed
+        }
+
+        // 2. 转成 CVPixelBuffer(320x320, RGB)
+        guard let pixelBuffer = cgImageToPixelBuffer(resizedCG, width: scaledW, height: scaledH) else {
+            throw MattingError.processingFailed
+        }
+
+        // 3. 运行 U2Net
+        let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? "input.1"
+        let outputName = model.modelDescription.outputDescriptionsByName.keys.first ?? "var_2227"
+        let featureValue = MLFeatureValue(pixelBuffer: pixelBuffer)
+        let input = try MLDictionaryFeatureProvider(dictionary: [inputName: featureValue])
+        let prediction = try model.prediction(from: input)
+
+        guard let mlOutput = prediction.featureValue(for: outputName)?.multiArrayValue else {
+            throw MattingError.processingFailed
+        }
+
+        // 4. 从 MLMultiArray 提取遮罩
+        guard let maskCG = u2netOutputToMask(mlOutput, width: scaledW, height: scaledH) else {
+            throw MattingError.processingFailed
+        }
+
+        // 5. 缩回原图尺寸
+        var maskCI = CIImage(cgImage: maskCG)
+        let rScale = max(1, CGFloat(max(w, h)) / 1024)
+
+        // 6. 二值化 + 填孔 + 移除小区域 + 羽化
+        if let binarized = binarizeMask(maskCI) { maskCI = binarized }
+        if let filled = fillInteriorHoles(maskCI) { maskCI = filled }
+        if let cleaned = removeSmallForegroundRegions(maskCI) { maskCI = cleaned }
+        if let b = featherMask(maskCI, radius: 0.5 * rScale) { maskCI = b }
+
+        if let maskCG = sharedContext.createCGImage(maskCI, from: maskCI.extent) {
+            lastMaskImage = UIImage(cgImage: maskCG)
+        }
+
+        let ciImage = CIImage(cgImage: safeCG)
+        return try blend(ciImage, mask: maskCI, featherRadius: feather)
+    }
+
+    /// U2Net 输出 → 二值遮罩 CGImage
+    /// U2Net 输出是 Float32,值域 [-1,1] 或 [0,1],需要归一化到 [0,255]
+    private static func u2netOutputToMask(_ mlMultiArray: MLMultiArray, width: Int, height: Int) -> CGImage? {
+        let count = width * height
+        let ptr = mlMultiArray.dataPointer.bindMemory(to: Float.self, capacity: count)
+
+        // 先找 min/max 来归一化
+        var minVal: Float = .infinity
+        var maxVal: Float = -.infinity
+        for i in 0..<count {
+            let v = ptr[i]
+            if v < minVal { minVal = v }
+            if v > maxVal { maxVal = v }
+        }
+        let range = maxVal - minVal
+        let safeRange = range > 0.001 ? range : 1.0
+
+        guard let ctx = CGContext(data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        guard let data = ctx.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: count)
+
+        for i in 0..<count {
+            let normalized = (ptr[i] - minVal) / safeRange
+            pixels[i] = UInt8(min(max(normalized * 255, 0), 255))
+        }
+        return ctx.makeImage()
+    }
+
     /// CGImage → CVPixelBuffer
     private static func cgImageToPixelBuffer(_ cgImage: CGImage, width: Int, height: Int) -> CVPixelBuffer? {
         var pixelBuffer: CVPixelBuffer?
@@ -204,8 +308,11 @@ final class MattingEngine: @unchecked Sendable {
     static func segmentPerson(in image: UIImage, feather: Double = 1.5) async throws -> UIImage {
         let cgImage = try prepareCGImage(from: image)
 
-        // 优先 Apple Vision 前景分割(iOS 17+) → DeepLabV3 → RMBG1.4 回退
+        // 优先 Apple Vision 前景分割(iOS 17+) → U2Net → DeepLabV3 → RMBG1.4 回退
         if let fg = try? foregroundSegment(cgImage, feather: feather) {
+            return fixOrientation(fg, to: image.imageOrientation)
+        }
+        if let fg = try? u2netSegment(cgImage, feather: feather) {
             return fixOrientation(fg, to: image.imageOrientation)
         }
         if let fg = try? deeplabSegment(cgImage, feather: feather) {
