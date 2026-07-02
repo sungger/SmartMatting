@@ -1,0 +1,310 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		12DCD436ECF3D5B21F76440E /* LaLabsu2netp.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = 5502458EDE59BD6F7FD41BF1 /* LaLabsu2netp.mlmodelc */; };
+		19A3B49B25E2B21751BBD798 /* DeepLab.mlmodel in Sources */ = {isa = PBXBuildFile; fileRef = 74F51F4189213193B50974D4 /* DeepLab.mlmodel */; };
+		361CD46F7C70B137B78BB049 /* U2NetUtils.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0BE980AE566C87F7D8B5C81 /* U2NetUtils.swift */; };
+		4E23760B1ADD8A67B6880228 /* LaLabsu2netp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 634C9864E44878266556A05A /* LaLabsu2netp.swift */; };
+		5AC36FAADD72EB3C0F3EECB2 /* DeepLab.mlmodel in Resources */ = {isa = PBXBuildFile; fileRef = 74F51F4189213193B50974D4 /* DeepLab.mlmodel */; };
+		A10001 /* SmartMattingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* SmartMattingApp.swift */; };
+		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
+		A10003 /* MattingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* MattingEngine.swift */; };
+		A10004 /* RefineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20007 /* RefineView.swift */; };
+		A10006 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20008 /* Assets.xcassets */; };
+		A1B2C3D4E5F6A7B8C9D0E1F3 /* IDPhotoEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D4E5F6A7B8C9D0E1F2 /* IDPhotoEngine.swift */; };
+		AD8029E9900746399E839124 /* RMBG_1_4.mlpackage in Resources */ = {isa = PBXBuildFile; fileRef = DAA7B50755034D72808CB016 /* RMBG_1_4.mlpackage */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		5502458EDE59BD6F7FD41BF1 /* LaLabsu2netp.mlmodelc */ = {isa = PBXFileReference; lastKnownFileType = wrapper.mlmodelc; path = LaLabsu2netp.mlmodelc; sourceTree = "<group>"; };
+		634C9864E44878266556A05A /* LaLabsu2netp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LaLabsu2netp.swift; sourceTree = "<group>"; };
+		74F51F4189213193B50974D4 /* DeepLab.mlmodel */ = {isa = PBXFileReference; includeInIndex = 1; path = DeepLab.mlmodel; sourceTree = "<group>"; };
+		A1B2C3D4E5F6A7B8C9D0E1F2 /* IDPhotoEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IDPhotoEngine.swift; sourceTree = "<group>"; };
+		A20001 /* SmartMattingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartMattingApp.swift; sourceTree = "<group>"; };
+		A20002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		A20003 /* MattingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MattingEngine.swift; sourceTree = "<group>"; };
+		A20004 /* SmartMatting.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SmartMatting.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A20005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20006 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		A20007 /* RefineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RefineView.swift; sourceTree = "<group>"; };
+		A20008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D0BE980AE566C87F7D8B5C81 /* U2NetUtils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = U2NetUtils.swift; sourceTree = "<group>"; };
+		DAA7B50755034D72808CB016 /* RMBG_1_4.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = wrapper.mlpackage; path = RMBG_1_4.mlpackage; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		A30001 = {
+			isa = PBXGroup;
+			children = (
+				A30002 /* SmartMatting */,
+				A30003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A30002 /* SmartMatting */ = {
+			isa = PBXGroup;
+			children = (
+				A20001 /* SmartMattingApp.swift */,
+				A20002 /* ContentView.swift */,
+				A20003 /* MattingEngine.swift */,
+				A1B2C3D4E5F6A7B8C9D0E1F2 /* IDPhotoEngine.swift */,
+				634C9864E44878266556A05A /* LaLabsu2netp.swift */,
+				5502458EDE59BD6F7FD41BF1 /* LaLabsu2netp.mlmodelc */,
+				DAA7B50755034D72808CB016 /* RMBG_1_4.mlpackage */,
+				D0BE980AE566C87F7D8B5C81 /* U2NetUtils.swift */,
+				A20005 /* Info.plist */,
+				A20006 /* LaunchScreen.storyboard */,
+				A20007 /* RefineView.swift */,
+				A20008 /* Assets.xcassets */,
+				74F51F4189213193B50974D4 /* DeepLab.mlmodel */,
+			);
+			path = SmartMatting;
+			sourceTree = "<group>";
+		};
+		A30003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A20004 /* SmartMatting.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A40001 /* SmartMatting */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A50003 /* Build configuration list for PBXNativeTarget "SmartMatting" */;
+			buildPhases = (
+				A40002 /* Sources */,
+				A40003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = SmartMatting;
+			productName = SmartMatting;
+			productReference = A20004 /* SmartMatting.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A50001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2650;
+			};
+			buildConfigurationList = A50002 /* Build configuration list for PBXProject "SmartMatting" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				"zh-Hans",
+			);
+			mainGroup = A30001;
+			productRefGroup = A30003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A40001 /* SmartMatting */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A40003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10006 /* Assets.xcassets in Resources */,
+				12DCD436ECF3D5B21F76440E /* LaLabsu2netp.mlmodelc in Resources */,
+				AD8029E9900746399E839124 /* RMBG_1_4.mlpackage in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A40002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A10001 /* SmartMattingApp.swift in Sources */,
+				A10002 /* ContentView.swift in Sources */,
+				A10003 /* MattingEngine.swift in Sources */,
+				A1B2C3D4E5F6A7B8C9D0E1F3 /* IDPhotoEngine.swift in Sources */,
+				A10004 /* RefineView.swift in Sources */,
+				4E23760B1ADD8A67B6880228 /* LaLabsu2netp.swift in Sources */,
+				361CD46F7C70B137B78BB049 /* U2NetUtils.swift in Sources */,
+				19A3B49B25E2B21751BBD798 /* DeepLab.mlmodel in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A60001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A60002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_LOCALIZABILITY_NONLOCALIZED = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A60003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = SmartMatting/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.smartmatting.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A60004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				INFOPLIST_FILE = SmartMatting/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.smartmatting.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A50002 /* Build configuration list for PBXProject "SmartMatting" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A60001 /* Debug */,
+				A60002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A50003 /* Build configuration list for PBXNativeTarget "SmartMatting" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A60003 /* Debug */,
+				A60004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A50001 /* Project object */;
+}
