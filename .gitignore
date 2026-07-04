@@ -1,0 +1,16 @@
+# 模型文件（太大，从 HuggingFace 重新下载）
+*.mlmodel
+*.mlmodelc/
+*.mlpackage/
+
+# Xcode
+*.xcuserdata
+*.xcworkspace/xcuserdata/
+DerivedData/
+build/
+
+# CocoaPods
+Pods/
+
+# macOS
+.DS_Store
