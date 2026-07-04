@@ -41,31 +41,58 @@ final class MattingEngine: @unchecked Sendable {
         }
         let config = MLModelConfiguration()
         config.computeUnits = .cpuAndNeuralEngine
-        return try? MLModel(contentsOf: url, configuration: config)
+        if let model = try? MLModel(contentsOf: url, configuration: config) {
+            // 打印输入输出描述
+            for (name, desc) in model.modelDescription.inputDescriptionsByName {
+                print("[U2Net] Input '\(name)': type=\(desc.type), constraint=\(String(describing: desc.imageConstraint))")
+            }
+            for (name, desc) in model.modelDescription.outputDescriptionsByName {
+                print("[U2Net] Output '\(name)': type=\(desc.type), shape=\(desc.multiArrayConstraint?.shape ?? [])")
+            }
+            return model
+        }
+        return nil
     }()
 
     // MARK: - DeepLabV3 语义分割抠图
 
     /// 使用 VNGenerateForegroundInstanceMaskRequest 进行前景分割(iOS 26+)
-    /// Apple 专门的前景/背景分离模型,支持人像和通用物体
+    /// Apple 人物分割（iOS 15+，模拟器和真机都支持）
     static func foregroundSegment(_ cgImage: CGImage, feather: Double = 1.5) throws -> UIImage {
         let w = cgImage.width, h = cgImage.height
         guard let safeCG = ensureReadableCGImage(cgImage) else {
             throw MattingError.processingFailed
         }
 
-        // 使用 iOS 26 的前景实例分割
-        let request = VNGenerateForegroundInstanceMaskRequest()
-        let handler = VNImageRequestHandler(cgImage: safeCG)
-        try handler.perform([request])
-
-        guard let result = request.results?.first else {
-            throw MattingError.processingFailed
+        // 先用 iOS 26 前景实例分割（更准），失败则回退 iOS 15 人物分割
+        var maskPB: CVPixelBuffer?
+        if #available(iOS 26.0, *) {
+            let request = VNGenerateForegroundInstanceMaskRequest()
+            let handler = VNImageRequestHandler(cgImage: safeCG)
+            do {
+                try handler.perform([request])
+                if let result = request.results?.first {
+                    maskPB = try result.generateMask(forInstances: result.allInstances)
+                }
+            } catch {
+                print("[Vision] ForegroundInstanceMask failed: \(error), trying PersonSegmentation")
+            }
         }
 
-        // 获取遮罩 pixel buffer
-        let maskPB = try result.generateMask(forInstances: result.allInstances)
-        guard let maskCG = pixelBufferToCGImage(maskPB) else {
+        // 回退到 VNGeneratePersonSegmentationRequest（iOS 15+，模拟器可用）
+        if maskPB == nil {
+            let request = VNGeneratePersonSegmentationRequest()
+            request.qualityLevel = .accurate
+            let handler = VNImageRequestHandler(cgImage: safeCG)
+            try handler.perform([request])
+            guard let result = request.results?.first else {
+                throw MattingError.processingFailed
+            }
+            maskPB = result.pixelBuffer
+        }
+
+        guard let maskPB = maskPB,
+              let maskCG = pixelBufferToCGImage(maskPB) else {
             throw MattingError.processingFailed
         }
 
@@ -190,23 +217,19 @@ final class MattingEngine: @unchecked Sendable {
             throw MattingError.processingFailed
         }
 
-        // 2. 转成 Float32 CVPixelBuffer(U2Net 需要归一化到 [0,1])
-        guard let pixelBuffer = cgImageToFloat32PixelBuffer(resizedCG, width: scaledW, height: scaledH) else {
+        // 2. 用 Vision 框架运行 U2Net（自动处理图像格式转换，模型输入是 Image 类型）
+        let visionModel = try VNCoreMLModel(for: model)
+        let request = VNCoreMLRequest(model: visionModel)
+        request.imageCropAndScaleOption = .scaleFill
+        let handler = VNImageRequestHandler(cgImage: resizedCG)
+        try handler.perform([request])
+
+        guard let result = request.results?.first as? VNCoreMLFeatureValueObservation,
+              let mlOutput = result.featureValue.multiArrayValue else {
             throw MattingError.processingFailed
         }
 
-        // 3. 运行 U2Net
-        let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? "input.1"
-        let outputName = model.modelDescription.outputDescriptionsByName.keys.first ?? "var_2227"
-        let featureValue = MLFeatureValue(pixelBuffer: pixelBuffer)
-        let input = try MLDictionaryFeatureProvider(dictionary: [inputName: featureValue])
-        let prediction = try model.prediction(from: input)
-
-        guard let mlOutput = prediction.featureValue(for: outputName)?.multiArrayValue else {
-            throw MattingError.processingFailed
-        }
-
-        // 4. 从 MLMultiArray 提取遮罩
+        // 3. 从 MLMultiArray 提取遮罩
         guard let maskCG = u2netOutputToMask(mlOutput, width: scaledW, height: scaledH) else {
             throw MattingError.processingFailed
         }
@@ -228,13 +251,13 @@ final class MattingEngine: @unchecked Sendable {
         }
         print("[U2Net] Mask fg ratio: \(String(format: "%.2f", fgRatio))")
 
-        // 5. 缩回原图尺寸
+        // 4. 缩回原图尺寸
         var maskCI = CIImage(cgImage: maskCG)
         maskCI = maskCI.transformed(by: CGAffineTransform(scaleX: CGFloat(w) / CGFloat(scaledW),
                                                            y: CGFloat(h) / CGFloat(scaledH)))
         let rScale2 = max(1, CGFloat(max(w, h)) / 1024)
 
-        // 6. 二值化 + 填孔 + 移除小区域 + 羽化（跳过 cleanMaskByColor，U2Net 对帽子等配饰识别准确，颜色清理会误删帽子）
+        // 5. 二值化 + 填孔 + 移除小区域 + 羽化（跳过 cleanMaskByColor，U2Net 对帽子等配饰识别准确，颜色清理会误删帽子）
         if let binarized = binarizeMask(maskCI) { maskCI = binarized }
         if let filled = fillInteriorHoles(maskCI) { maskCI = filled }
         if let cleaned = removeSmallForegroundRegions(maskCI) { maskCI = cleaned }
@@ -252,11 +275,13 @@ final class MattingEngine: @unchecked Sendable {
     /// 返回缩放到原图尺寸的灰度遮罩 CGImage
     static func u2netSegmentRaw(_ cgImage: CGImage) throws -> CGImage? {
         guard let model = u2netModel else {
+            print("[U2Net.Raw] Model is nil")
             throw MattingError.processingFailed
         }
 
         let w = cgImage.width, h = cgImage.height
         guard let safeCG = ensureReadableCGImage(cgImage) else {
+            print("[U2Net.Raw] ensureReadableCGImage failed")
             throw MattingError.processingFailed
         }
 
@@ -264,55 +289,76 @@ final class MattingEngine: @unchecked Sendable {
         let scale = CGFloat(targetSize) / CGFloat(max(w, h))
         let scaledW = Int(CGFloat(w) * scale)
         let scaledH = Int(CGFloat(h) * scale)
+        print("[U2Net.Raw] original=\(w)x\(h), scaled=\(scaledW)x\(scaledH)")
 
         guard let resizedCG = resizeCGImage(safeCG, width: scaledW, height: scaledH) else {
+            print("[U2Net.Raw] resizeCGImage failed")
             throw MattingError.processingFailed
         }
 
         guard let pixelBuffer = cgImageToFloat32PixelBuffer(resizedCG, width: scaledW, height: scaledH) else {
+            print("[U2Net.Raw] cgImageToFloat32PixelBuffer failed")
             throw MattingError.processingFailed
         }
 
         let inputName = model.modelDescription.inputDescriptionsByName.keys.first ?? "input.1"
         let outputName = model.modelDescription.outputDescriptionsByName.keys.first ?? "var_2227"
+        print("[U2Net.Raw] input=\(inputName), output=\(outputName)")
         let featureValue = MLFeatureValue(pixelBuffer: pixelBuffer)
         let input = try MLDictionaryFeatureProvider(dictionary: [inputName: featureValue])
         let prediction = try model.prediction(from: input)
 
         guard let mlOutput = prediction.featureValue(for: outputName)?.multiArrayValue else {
+            print("[U2Net.Raw] No output for key \(outputName)")
             throw MattingError.processingFailed
         }
 
+        print("[U2Net.Raw] mlOutput shape=\(mlOutput.shape), dataType=\(mlOutput.dataType.rawValue)")
+
         // 提取原始遮罩（保留浮点值，不做二值化）
-        guard let rawMaskCG = u2netOutputToMaskFloat(mlOutput, width: scaledW, height: scaledH) else {
+        // 先用 u2netOutputToMask 试试（原始版本能工作）
+        guard let rawMaskCG = u2netOutputToMask(mlOutput, width: scaledW, height: scaledH) else {
+            print("[U2Net.Raw] u2netOutputToMask returned nil")
             throw MattingError.processingFailed
         }
+
+        print("[U2Net.Raw] rawMaskCG size=\(rawMaskCG.width)x\(rawMaskCG.height)")
 
         // 缩放到原图尺寸
         guard let ctx = CGContext(data: nil, width: w, height: h,
             bitsPerComponent: 8, bytesPerRow: w,
             space: CGColorSpaceCreateDeviceGray(),
-            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else {
+            print("[U2Net.Raw] CGContext creation failed")
+            return nil
+        }
         ctx.interpolationQuality = .high
         ctx.draw(rawMaskCG, in: CGRect(x: 0, y: 0, width: w, height: h))
-        return ctx.makeImage()
+        let result = ctx.makeImage()
+        print("[U2Net.Raw] Final mask: \(result != nil ? "ok" : "nil")")
+        return result
     }
 
     /// U2Net 输出 → 浮点灰度遮罩（保留原始值，不做二值化）
     private static func u2netOutputToMaskFloat(_ mlMultiArray: MLMultiArray, width: Int, height: Int) -> CGImage? {
+        let totalCount = mlMultiArray.count
         let count = width * height
+        let readCount = min(totalCount, count)
         var floatValues = [Float](repeating: 0, count: count)
         if mlMultiArray.dataType == .float16 {
-            let ptr16 = mlMultiArray.dataPointer.bindMemory(to: UInt16.self, capacity: count)
-            for i in 0..<count {
+            let ptr16 = mlMultiArray.dataPointer.bindMemory(to: UInt16.self, capacity: totalCount)
+            for i in 0..<readCount {
                 floatValues[i] = Float16ToFloat(ptr16[i])
             }
         } else {
-            let ptr32 = mlMultiArray.dataPointer.bindMemory(to: Float.self, capacity: count)
-            for i in 0..<count {
+            let ptr32 = mlMultiArray.dataPointer.bindMemory(to: Float.self, capacity: totalCount)
+            for i in 0..<readCount {
                 floatValues[i] = ptr32[i]
             }
         }
+        print("[U2Net.MaskFloat] totalCount=\(totalCount), readCount=\(readCount), first10=", terminator: "")
+        for i in 0..<min(10, readCount) { print(" \(floatValues[i])", terminator: "") }
+        print()
 
         // 归一化到 [0, 1]
         var minVal: Float = .infinity
@@ -322,6 +368,7 @@ final class MattingEngine: @unchecked Sendable {
             maxVal = max(maxVal, floatValues[i])
         }
         let range = maxVal - minVal
+        print("[U2Net.MaskFloat] min=\(minVal), max=\(maxVal), range=\(range), count=\(count)")
         guard range > 0 else { return nil }
 
         guard let data = calloc(count, MemoryLayout<UInt8>.size) else { return nil }
@@ -557,10 +604,18 @@ final class MattingEngine: @unchecked Sendable {
         let w = cgImage.width, h = cgImage.height
         let originalSize = CGSize(width: w, height: h)
 
-        // 方案 B：RMBG1.4（高质量边缘）+ U2Net（帽子识别）融合
-        // 跳过 Apple Vision（会误删帽子等配饰），直接走 RMBG1.4 + U2Net 融合
+        // 方案：优先 Apple Vision 前景分割（iOS 26，对人物效果极佳，无横向裂缝问题）
+        // 如果 Vision 失败，回退到 RMBG1.4
+        do {
+            let visionResult = try foregroundSegment(cgImage, feather: feather)
+            print("[Person] Using Apple Vision foreground segmentation")
+            let finalResult = lockPNG(fixOrientation(visionResult, to: image.imageOrientation))
+            return finalResult
+        } catch {
+            print("[Person] Vision failed: \(error), falling back to RMBG1.4")
+        }
 
-        // 1. 计算 letterbox 参数
+        // 回退方案：RMBG1.4
         let inputSize: CGFloat = 1024
         let scale = min(inputSize / originalSize.width, inputSize / originalSize.height)
         let scaledW = originalSize.width * scale
@@ -568,49 +623,29 @@ final class MattingEngine: @unchecked Sendable {
         let offsetX = (inputSize - scaledW) / 2.0
         let offsetY = (inputSize - scaledH) / 2.0
 
-        // 2. 运行 RMBG1.4（1024×1024，高质量边缘）
         let mask1024 = try rmbgMask(for: image)
         guard let maskCG = mask1024.cgImage,
               let croppedMask = maskCG.cropping(to: CGRect(x: offsetX, y: offsetY, width: scaledW, height: scaledH)) else {
             throw MattingError.processingFailed
         }
 
-        // 3. 缩放 RMBG1.4 遮罩到原图尺寸
         var rmbgMaskCI = CIImage(cgImage: croppedMask)
         rmbgMaskCI = rmbgMaskCI.transformed(by: CGAffineTransform(scaleX: originalSize.width / scaledW,
                                                                    y: originalSize.height / scaledH))
 
-        // 4. 运行 U2Net 获取帽子感知遮罩
-        var u2netMaskCI: CIImage?
-        if let u2netResult = try? u2netSegmentRaw(cgImage) {
-            u2netMaskCI = CIImage(cgImage: u2netResult)
-        }
-
-        // 5. 融合遮罩：U2Net 高置信度前景覆盖 RMBG1.4
-        var fusedMask: CIImage
-        if let u2net = u2netMaskCI {
-            fusedMask = fuseMasks(rmbg: rmbgMaskCI, u2net: u2net, threshold: 0.7)
-        } else {
-            fusedMask = rmbgMaskCI
-        }
-
-        // 6. 二值化 + 后处理
+        // 后处理
         let rScale = max(1, CGFloat(max(w, h)) / 1024)
-        if let binarized = binarizeMask(fusedMask) { fusedMask = binarized }
-        if let cleaned = removeSmallForegroundRegions(fusedMask, minArea: 500) { fusedMask = cleaned }
-        if let b = featherMask(fusedMask, radius: 0.5 * rScale) { fusedMask = b }
+        if let binarized = binarizeMask(rmbgMaskCI) { rmbgMaskCI = binarized }
+        if let d1 = morph(rmbgMaskCI, r: 8.0, dilate: true) { rmbgMaskCI = d1 }
+        if let e1 = morph(rmbgMaskCI, r: 8.0, dilate: false) { rmbgMaskCI = e1 }
+        if let binarized = binarizeMask(rmbgMaskCI) { rmbgMaskCI = binarized }
+        if let cleaned = removeSmallForegroundRegions(rmbgMaskCI, minArea: 500) { rmbgMaskCI = cleaned }
+        if let b = featherMask(rmbgMaskCI, radius: 0.5 * rScale) { rmbgMaskCI = b }
 
-        // 7. 生成最终遮罩
-        var finalMaskCG: CGImage?
-        if let fmcg = sharedContext.createCGImage(fusedMask, from: CGRect(origin: .zero, size: originalSize)) {
-            lastMaskImage = UIImage(cgImage: fmcg)
-            finalMaskCG = fmcg
-        }
-        guard let finalMaskCG = finalMaskCG else {
+        guard let finalMaskCG = sharedContext.createCGImage(rmbgMaskCI, from: CGRect(origin: .zero, size: originalSize)) else {
             throw MattingError.processingFailed
         }
-
-        print("[Fuse] RMBG1.4 + U2Net fusion, original=\(w)x\(h)")
+        lastMaskImage = UIImage(cgImage: finalMaskCG)
 
         let result = try blend(CIImage(cgImage: cgImage), mask: CIImage(cgImage: finalMaskCG), featherRadius: feather)
         let finalResult = lockPNG(fixOrientation(result, to: image.imageOrientation))
@@ -956,7 +991,7 @@ final class MattingEngine: @unchecked Sendable {
     }
 
     /// 二值化遮罩:>threshold → 255(纯白), ≤threshold → 0(纯黑),消除灰色过渡
-    private static func binarizeMask(_ mask: CIImage, threshold: UInt8 = 128) -> CIImage? {
+    static func binarizeMask(_ mask: CIImage, threshold: UInt8 = 128) -> CIImage? {
         guard let cgMask = sharedContext.createCGImage(mask, from: mask.extent) else { return nil }
         let w = cgMask.width, h = cgMask.height
         let total = w * h
@@ -1476,7 +1511,7 @@ final class MattingEngine: @unchecked Sendable {
             throw MattingError.processingFailed
         }
 
-        // 创建 RGBA 画布
+        // 创建 RGBA 画布（premultiplied alpha，CGContext 支持的标准格式）
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
         guard let ctx = CGContext(data: nil, width: w, height: h,
@@ -1484,10 +1519,6 @@ final class MattingEngine: @unchecked Sendable {
                                    space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else {
             throw MattingError.processingFailed
         }
-
-        // 先填充白色不透明背景（否则 premultiplied 会导致 RGB 被清零）
-        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
-        ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
 
         // 绘制原图
         ctx.draw(imageCG, in: CGRect(x: 0, y: 0, width: w, height: h))
@@ -1501,15 +1532,65 @@ final class MattingEngine: @unchecked Sendable {
         }
         let maskBPR = maskCG.bytesPerRow
 
-        // 把遮罩写入 alpha 通道,阈值二值化消除半透明
+        // 把遮罩写入 alpha 通道，同时修正 premultiplied RGB
         for y in 0..<h {
             for x in 0..<w {
                 let off = y * w * 4 + x * 4
                 let maskOff = y * maskBPR + x
                 let rawAlpha = maskData[maskOff]
-                rgbBytes[off + 3] = rawAlpha >= 128 ? 255 : 0
+                let alpha: UInt8 = rawAlpha >= 128 ? 255 : 0
+                if alpha == 0 {
+                    rgbBytes[off] = 0
+                    rgbBytes[off + 1] = 0
+                    rgbBytes[off + 2] = 0
+                }
+                rgbBytes[off + 3] = alpha
             }
         }
+
+        // 迭代填缝：反复扫描直到没有新的裂缝被修复
+        var filledAny = true
+        var iteration = 0
+        while filledAny && iteration < 10 {
+            filledAny = false
+            iteration += 1
+            for y in 1..<(h - 1) {
+                for x in 1..<(w - 1) {
+                    let off = y * w * 4 + x * 4 + 3
+                    if rgbBytes[off] == 255 { continue }
+                    var fgCount = 0
+                    for dy in -1...1 {
+                        for dx in -1...1 {
+                            if dx == 0 && dy == 0 { continue }
+                            if rgbBytes[(y + dy) * w * 4 + (x + dx) * 4 + 3] == 255 { fgCount += 1 }
+                        }
+                    }
+                    if fgCount >= 5 {
+                        rgbBytes[off] = 255
+                        var rSum = 0, gSum = 0, bSum = 0, n = 0
+                        for dy in -1...1 {
+                            for dx in -1...1 {
+                                if dx == 0 && dy == 0 { continue }
+                                let noff = (y + dy) * w * 4 + (x + dx) * 4
+                                if rgbBytes[noff + 3] == 255 {
+                                    rSum += Int(rgbBytes[noff])
+                                    gSum += Int(rgbBytes[noff + 1])
+                                    bSum += Int(rgbBytes[noff + 2])
+                                    n += 1
+                                }
+                            }
+                        }
+                        if n > 0 {
+                            rgbBytes[off - 3] = UInt8(rSum / n)
+                            rgbBytes[off - 2] = UInt8(gSum / n)
+                            rgbBytes[off - 1] = UInt8(bSum / n)
+                        }
+                        filledAny = true
+                    }
+                }
+            }
+        }
+        print("[FillGaps] Ran \(iteration) iterations")
 
         guard let resultCG = ctx.makeImage() else { throw MattingError.processingFailed }
 
@@ -1575,6 +1656,70 @@ final class MattingEngine: @unchecked Sendable {
         let f = CIFilter(name: "CIGaussianBlur", parameters: [kCIInputImageKey: ci, kCIInputRadiusKey: radius])
         guard let out = f?.outputImage, let cg = sharedContext.createCGImage(out, from: ci.extent) else { return nil }
         return UIImage(cgImage: cg)
+    }
+
+    // MARK: - 自动精修
+
+    /// 自动精修遮罩：去毛刺 + 平滑边缘 + 填小孔
+    static func autoRefineMask(_ mask: UIImage, feather: Double = 1.0) -> UIImage? {
+        guard let cg = mask.cgImage else { return nil }
+        var maskCI = CIImage(cgImage: cg)
+
+        // 1. 形态学闭运算（先膨胀再腐蚀，填小孔）
+        if let dilated = morph(maskCI, r: 2.0, dilate: true) {
+            maskCI = dilated
+        }
+        if let eroded = morph(maskCI, r: 2.0, dilate: false) {
+            maskCI = eroded
+        }
+
+        // 2. 移除小块孤立区域
+        if let cleaned = removeSmallForegroundRegions(maskCI, minArea: 300) {
+            maskCI = cleaned
+        }
+
+        // 3. 轻微羽化
+        if let feathered = featherMask(maskCI, radius: CGFloat(feather)) {
+            maskCI = feathered
+        }
+
+        // 4. 重新二值化
+        if let binarized = binarizeMask(maskCI) {
+            maskCI = binarized
+        }
+
+        guard let resultCG = sharedContext.createCGImage(maskCI, from: maskCI.extent) else { return nil }
+        return UIImage(cgImage: resultCG)
+    }
+
+    /// 自动精修前景图：用精修后的遮罩重新合成
+    static func autoRefine(_ foreground: UIImage, original: UIImage, feather: Double = 1.0) -> UIImage? {
+        guard let fgCG = foreground.cgImage, let origCG = original.cgImage else { return nil }
+
+        // 从前景图提取 alpha 作为遮罩
+        let w = fgCG.width, h = fgCG.height
+        guard let maskCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        maskCtx.draw(fgCG, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let maskCG = maskCtx.makeImage() else { return nil }
+
+        // 精修遮罩
+        guard let refinedMask = autoRefineMask(UIImage(cgImage: maskCG), feather: feather),
+              let refinedMaskCG = refinedMask.cgImage else { return nil }
+
+        // 用精修后的遮罩重新合成
+        var maskCI = CIImage(cgImage: refinedMaskCG)
+        if let binarized = binarizeMask(maskCI) { maskCI = binarized }
+
+        lastMaskImage = UIImage(cgImage: refinedMaskCG)
+
+        do {
+            return try blend(CIImage(cgImage: origCG), mask: maskCI, featherRadius: feather)
+        } catch {
+            return nil
+        }
     }
 }
 

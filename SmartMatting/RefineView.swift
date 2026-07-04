@@ -21,6 +21,7 @@ struct RefineView: View {
     // 缓存的遮罩像素（避免每次重新渲染）
     @State private var cachedMaskPixels: [UInt8]?
     @State private var cachedMaskSize: CGSize = .zero
+    @State private var showContour = true
 
     enum BrushMode: String, CaseIterable {
         case erase = "擦除"
@@ -71,6 +72,15 @@ struct RefineView: View {
                             .resizable()
                             .frame(width: renderedW, height: renderedH)
                             .position(x: geo.size.width / 2, y: geo.size.height / 2)
+
+                        // 轮廓线叠加
+                        if showContour {
+                            Image(uiImage: generateContourImage(from: maskImage, size: imageSize))
+                                .resizable()
+                                .frame(width: renderedW, height: renderedH)
+                                .position(x: geo.size.width / 2, y: geo.size.height / 2)
+                                .allowsHitTesting(false)
+                        }
 
                         // 画笔预览层
                         Canvas { context, size in
@@ -140,6 +150,13 @@ struct RefineView: View {
                         Image(systemName: "arrow.uturn.backward")
                     }
                     .disabled(strokes.isEmpty)
+
+                    Button {
+                        showContour.toggle()
+                    } label: {
+                        Image(systemName: showContour ? "eye" : "eye.slash")
+                    }
+                    .accessibilityLabel(showContour ? "隐藏轮廓" : "显示轮廓")
 
                     Button("重置") {
                         strokes.removeAll()
@@ -271,7 +288,7 @@ struct RefineView: View {
         let imageSize = mattedImage.size
         let w = Int(imageSize.width)
         let h = Int(imageSize.height)
-        let total = w * h
+        _ = w * h
 
         let displayW = displayRect.width > 0 ? displayRect.width : imageSize.width
         let displayH = displayRect.height > 0 ? displayRect.height : imageSize.height
@@ -339,7 +356,7 @@ struct RefineView: View {
     private func featherMaskPixels(_ pixels: inout [UInt8], width: Int, height: Int, radius: Int) -> [UInt8] {
         guard radius > 0 else { return pixels }
         var result = pixels
-        let total = width * height
+        _ = width * height
         for y in 0..<height {
             for x in 0..<width {
                 let idx = y * width + x
@@ -378,6 +395,73 @@ struct RefineView: View {
         }
 
         return ctx.makeImage()
+    }
+
+    // MARK: - 轮廓线生成
+
+    private func generateContourImage(from mask: UIImage, size: CGSize) -> UIImage {
+        guard let cg = mask.cgImage else { return UIImage() }
+        let w = Int(size.width), h = Int(size.height)
+
+        // 缩放遮罩到目标尺寸
+        guard let ctx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return UIImage() }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return UIImage() }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: w * h)
+
+        // 边缘检测
+        var edgePixels = [UInt8](repeating: 0, count: w * h)
+        for y in 0..<h {
+            for x in 0..<w {
+                let idx = y * w + x
+                if pixels[idx] < 128 { continue }
+                var isEdge = false
+                for dy in -1...1 {
+                    for dx in -1...1 {
+                        if dx == 0 && dy == 0 { continue }
+                        let nx = x + dx, ny = y + dy
+                        guard nx >= 0, nx < w, ny >= 0, ny < h else { isEdge = true; break }
+                        if pixels[ny * w + nx] < 128 { isEdge = true; break }
+                    }
+                    if isEdge { break }
+                }
+                edgePixels[idx] = isEdge ? 255 : 0
+            }
+        }
+
+        // 渲染彩色轮廓线
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = mask.scale
+        return UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
+            let cgCtx = ctx.cgContext
+            let lineW = max(1.5, CGFloat(max(w, h)) / 400)
+            cgCtx.setStrokeColor(UIColor.systemGreen.cgColor)
+            cgCtx.setLineWidth(lineW)
+
+            for y in 0..<h {
+                var runStart: Int?
+                for x in 0..<w {
+                    if edgePixels[y * w + x] > 128 {
+                        if runStart == nil { runStart = x }
+                    } else {
+                        if let start = runStart {
+                            cgCtx.move(to: CGPoint(x: start, y: y))
+                            cgCtx.addLine(to: CGPoint(x: x - 1, y: y))
+                            cgCtx.strokePath()
+                            runStart = nil
+                        }
+                    }
+                }
+                if let start = runStart {
+                    cgCtx.move(to: CGPoint(x: start, y: y))
+                    cgCtx.addLine(to: CGPoint(x: w - 1, y: y))
+                    cgCtx.strokePath()
+                }
+            }
+        }
     }
 
     // MARK: - 棋盘格

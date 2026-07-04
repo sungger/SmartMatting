@@ -12,8 +12,6 @@ struct ContentView: View {
     @State private var selectedBackground: BackgroundOption = .transparent
     @State private var showingShareSheet = false
     @State private var mattingMode: MattingMode = .person
-    @State private var showRefine = false
-    @State private var currentMask: UIImage?
 
     // 批量抠图
     @State private var batchImages: [UIImage] = []
@@ -43,6 +41,10 @@ struct ContentView: View {
 
     // 重试计数
     @State private var retryCount = 0
+
+    // 轮廓线显示
+    @State private var showContour = true
+    @State private var contourImage: UIImage?
 
     /// 处理进度提示文字
     var processingMessage: String {
@@ -85,70 +87,45 @@ struct ContentView: View {
     }
 
     var body: some View {
-        ZStack {
-            if showRefine, let original = originalImage, let result = resultImage {
-                RefineView(
-                    originalImage: original,
-                    mattedImage: result,
-                    maskImage: MattingEngine.lastMaskImage ?? result,
-                    onSave: { refined in
-                        resultImage = refined
-                        showRefine = false
-                    },
-                    onCancel: { showRefine = false }
+        NavigationStack {
+            ZStack {
+                // 渐变背景
+                LinearGradient(
+                    colors: [Color(.systemGray6), Color(.systemBackground)],
+                    startPoint: .top,
+                    endPoint: .bottom
                 )
-            } else {
-                NavigationStack {
-                    VStack(spacing: 0) {
-                        if isBatchMode && !batchImages.isEmpty {
-                            batchModeContent
-                        } else {
-                            normalModeContent
-                        }
+                .ignoresSafeArea()
+
+                VStack(spacing: 0) {
+                    if isBatchMode && !batchImages.isEmpty {
+                        batchModeContent
+                    } else {
+                        normalModeContent
                     }
-                    .navigationTitle("智能抠图")
-                    .toolbar {
-                        if resultImage != nil {
-                            ToolbarItem(placement: .topBarLeading) {
-                                HStack(spacing: 4) {
-                                    Button {
-                                        reset()
-                                    } label: {
-                                        Image(systemName: "chevron.left")
-                                    }
-                                    .accessibilityLabel("返回")
-                                    .accessibilityHint("回到选图页面")
-
-                                    Button {
-                                        autoRefineMask()
-                                    } label: {
-                                        Label("自动", systemImage: "wand.and.stars")
-                                    }
-                                    .accessibilityLabel("自动精修")
-                                    .accessibilityHint("自动清理帽子等边缘残留")
-
-                                    Button {
-                                        showRefine = true
-                                    } label: {
-                                        Label("精修", systemImage: "paintbrush")
-                                    }
-                                    .accessibilityLabel("精修")
-                                    .accessibilityHint("手动涂抹修改抠图边缘")
-                                }
-                            }
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button("保存") { saveToAlbum() }
-                                    .accessibilityLabel("保存到相册")
-                                    .accessibilityHint("将抠图结果保存到系统相册")
-                            }
-                            ToolbarItem(placement: .topBarTrailing) {
-                                Button(action: { showingShareSheet = true }) {
-                                    Image(systemName: "square.and.arrow.up")
-                                }
-                                .accessibilityLabel("分享")
-                                .accessibilityHint("通过系统分享菜单发送图片")
-                            }
+                }
+            }
+            .navigationTitle("智能抠图")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                if resultImage != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            reset()
+                        } label: {
+                            Image(systemName: "chevron.left")
                         }
+                        .accessibilityLabel("返回")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("保存") { saveToAlbum() }
+                            .accessibilityLabel("保存到相册")
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button(action: { showingShareSheet = true }) {
+                            Image(systemName: "square.and.arrow.up")
+                        }
+                        .accessibilityLabel("分享")
                     }
                 }
             }
@@ -315,7 +292,7 @@ struct ContentView: View {
                             .padding(.vertical, 14)
                     }
                     .buttonStyle(.borderedProminent)
-                    .onChange(of: selectedItem) { newItem in
+                    .onChange(of: selectedItem) { _, newItem in
                         loadImage(from: newItem)
                     }
                     .accessibilityLabel("选择图片")
@@ -326,7 +303,7 @@ struct ContentView: View {
                             .font(.subheadline)
                     }
                     .buttonStyle(.bordered)
-                    .onChange(of: selectedItems) { items in
+                    .onChange(of: selectedItems) { _, items in
                         if !items.isEmpty { loadBatchImages(items) }
                     }
                     .accessibilityLabel("批量抠图")
@@ -353,7 +330,7 @@ struct ContentView: View {
                     }
                     .pickerStyle(.segmented)
                     .frame(width: 160)
-                    .onChange(of: mattingMode) { _ in
+                    .onChange(of: mattingMode) { _, _ in
                         resultImage = nil
                         foregroundImage = nil
                         selectedBackground = .transparent
@@ -367,7 +344,7 @@ struct ContentView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
-                        .onChange(of: selectedItem) { newItem in
+                        .onChange(of: selectedItem) { _, newItem in
                             loadImage(from: newItem)
                         }
                         .accessibilityLabel("重新选图")
@@ -397,14 +374,31 @@ struct ContentView: View {
     var imagePreviewArea: some View {
         Group {
             if isProcessing {
-                VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(1.2)
-                        .accessibilityLabel("正在处理")
+                VStack(spacing: 20) {
+                    // 旋转圆环动画
+                    ZStack {
+                        Circle()
+                            .stroke(Color(.systemGray5), lineWidth: 4)
+                            .frame(width: 60, height: 60)
+                        Circle()
+                            .trim(from: 0, to: 0.7)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [.blue, .purple, .pink],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round)
+                            )
+                            .frame(width: 60, height: 60)
+                            .rotationEffect(.degrees(isProcessing ? 360 : 0))
+                            .animation(.linear(duration: 1).repeatForever(autoreverses: false), value: isProcessing)
+                    }
                     Text(processingMessage)
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
+                .padding(40)
                 .accessibilityElement(children: .combine)
                 .accessibilityLabel(processingMessage)
             } else if let error = errorMessage {
@@ -439,10 +433,31 @@ struct ContentView: View {
                         .resizable()
                         .scaledToFit()
                         .accessibilityLabel("抠图结果")
+                    // 轮廓线叠加
+                    if showContour, let contour = contourImage {
+                        Image(uiImage: contour)
+                            .resizable()
+                            .scaledToFit()
+                            .accessibilityHidden(true)
+                    }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 .padding(.horizontal, 20)
+                // 轮廓线开关
+                .overlay(alignment: .topTrailing) {
+                    Button {
+                        showContour.toggle()
+                    } label: {
+                        Image(systemName: showContour ? "eye" : "eye.slash")
+                            .font(.caption)
+                            .padding(6)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
+                    }
+                    .padding(8)
+                    .accessibilityLabel(showContour ? "隐藏轮廓线" : "显示轮廓线")
+                }
             } else if let original = originalImage {
                 Image(uiImage: original)
                     .resizable()
@@ -452,11 +467,25 @@ struct ContentView: View {
                     .padding(.horizontal, 20)
                     .accessibilityLabel("已选择的原始图片")
             } else {
-                VStack(spacing: 16) {
-                    Image(systemName: "photo.on.rectangle.angled")
-                        .font(.system(size: 64))
-                        .foregroundColor(.secondary.opacity(0.5))
-                        .accessibilityHidden(true)
+                VStack(spacing: 20) {
+                    ZStack {
+                        Circle()
+                            .fill(LinearGradient(
+                                colors: [.blue.opacity(0.1), .purple.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ))
+                            .frame(width: 100, height: 100)
+                        Image(systemName: "photo.on.rectangle.angled")
+                            .font(.system(size: 44))
+                            .foregroundStyle(
+                                LinearGradient(
+                                    colors: [.blue, .purple],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                    }
                     Text("选择一张照片开始抠图")
                         .font(.body)
                         .foregroundColor(.secondary)
@@ -470,36 +499,53 @@ struct ContentView: View {
     // MARK: - 背景选择
 
     var backgroundPicker: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: 6) {
+            Text("背景")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     ForEach(BackgroundOption.allCases) { option in
                         if option.available(in: mattingMode) {
                             Button {
-                                selectedBackground = option
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    selectedBackground = option
+                                }
                                 applyBackground(option)
                             } label: {
-                                VStack(spacing: 4) {
+                                VStack(spacing: 6) {
                                     ZStack {
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(selectedBackground == option ? Color.accentColor.opacity(0.15) : Color(.systemGray5))
+                                            .frame(width: 52, height: 52)
                                         if option == .idPhoto {
                                             Image(systemName: "person.crop.rectangle")
-                                                .font(.system(size: 18))
+                                                .font(.system(size: 20))
                                                 .foregroundColor(selectedBackground == option ? .accentColor : .secondary)
-                                                .frame(width: 36, height: 36)
+                                        } else if option == .transparent {
+                                            Image(systemName: "checkerboard.rectangle")
+                                                .font(.system(size: 20))
+                                                .foregroundColor(selectedBackground == option ? .accentColor : .secondary)
+                                        } else if option == .blur {
+                                            Image(systemName: "circle.dotted")
+                                                .font(.system(size: 20))
+                                                .foregroundColor(selectedBackground == option ? .accentColor : .secondary)
                                         } else {
                                             Circle()
                                                 .fill(bgColor(option))
-                                                .frame(width: 36, height: 36)
+                                                .frame(width: 24, height: 24)
                                                 .overlay(
                                                     Circle()
-                                                        .stroke(selectedBackground == option ? Color.accentColor : Color.gray.opacity(0.3), lineWidth: 2)
+                                                        .stroke(Color(.systemGray4), lineWidth: 1)
                                                 )
-                                            if option == .transparent {
-                                                Image(systemName: "checkerboard.rectangle")
-                                                    .font(.caption2).foregroundColor(.gray)
-                                            }
                                         }
                                     }
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(selectedBackground == option ? Color.accentColor : Color.clear, lineWidth: 2)
+                                    )
                                     Text(option.rawValue)
                                         .font(.caption2)
                                         .foregroundColor(selectedBackground == option ? .accentColor : .secondary)
@@ -507,7 +553,6 @@ struct ContentView: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityLabel("\(option.rawValue)背景")
-                            .accessibilityHint("切换为\(option.rawValue)背景")
                             .accessibilityAddTraits(selectedBackground == option ? .isSelected : [])
                         }
                     }
@@ -531,7 +576,7 @@ struct ContentView: View {
                             .foregroundColor(.accentColor)
                     }
                     Slider(value: $featherStrength, in: 0...5, step: 0.5)
-                        .onChange(of: featherStrength) { _ in reapplyFeather() }
+                        .onChange(of: featherStrength) { _, _ in reapplyFeather() }
                         .accessibilityLabel("边缘羽化强度")
                         .accessibilityValue(String(format: "%.1f像素", featherStrength))
                         .accessibilityHint("调整抠图边缘的柔和程度")
@@ -605,7 +650,7 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .onChange(of: idPhotoSize) { _ in regenerateIDPhoto() }
+                .onChange(of: idPhotoSize) { _, _ in regenerateIDPhoto() }
                 .accessibilityLabel("证件照尺寸")
                 .accessibilityHint("选择一寸、二寸或小一寸")
             }
@@ -836,13 +881,16 @@ struct ContentView: View {
                 fg = try await MattingEngine.segmentObject(in: image)
             }
 
+            // 自动精修（默认轻度）
+            let refined = MattingEngine.autoRefine(fg, original: image, feather: 1.0) ?? fg
+
             await MainActor.run {
-                foregroundImage = fg
-                resultImage = synthesizeResult(foreground: fg, background: selectedBackground)
-                // 锁定 alpha
+                foregroundImage = refined
+                resultImage = synthesizeResult(foreground: refined, background: selectedBackground)
                 if let ri = resultImage, let data = ri.pngData(), let locked = UIImage(data: data) {
                     resultImage = locked
                 }
+                contourImage = generateContour(from: refined)
                 isProcessing = false
             }
         } catch {
@@ -882,6 +930,7 @@ struct ContentView: View {
                         foregroundImage = newFg
                         isProcessing = false
                         resultImage = synthesizeResult(foreground: newFg, background: option)
+                        contourImage = generateContour(from: newFg)
                     }
                 } catch {
                     await MainActor.run {
@@ -984,108 +1033,135 @@ struct ContentView: View {
         }
     }
 
-    func autoRefineMask() {
-        guard let mask = MattingEngine.lastMaskImage,
-              let maskCI = CIImage(image: mask),
-              let original = originalImage else {
-            saveMessage = "自动精修失败：缺少遮罩数据"
+    func saveToAlbum() {
+        guard let fg = foregroundImage else {
+            saveMessage = "没有可保存的图片"
             showSaveAlert = true
             return
         }
 
-        guard let refinedMask = MattingEngine.autoRefineMask(maskCI),
-              let refinedMaskCG = CIContext().createCGImage(refinedMask, from: refinedMask.extent) else {
-            saveMessage = "自动精修失败：遮罩处理出错"
+        // 1. 裁剪人物到边界
+        let trimmed = trimToContent(fg) ?? fg
+
+        // 2. 如果人物太小，放大到合适尺寸（最短边至少 800px）
+        let minTarget: CGFloat = 800
+        let fgW = trimmed.size.width
+        let fgH = trimmed.size.height
+        let minDim = min(fgW, fgH)
+        let scale = minDim < minTarget ? minTarget / minDim : 1.0
+        let scaledW = fgW * scale
+        let scaledH = fgH * scale
+
+        // 3. 合成：透明背景 + 阴影 + 人物 + 轮廓线
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1
+        fmt.opaque = false
+        let finalImage = UIGraphicsImageRenderer(size: CGSize(width: scaledW, height: scaledH), format: fmt).image { ctx in
+            let cgCtx = ctx.cgContext
+            let drawRect = CGRect(x: 0, y: 0, width: scaledW, height: scaledH)
+
+            // 人物阴影
+            cgCtx.saveGState()
+            cgCtx.setShadow(offset: CGSize(width: 3, height: 5), blur: 12, color: UIColor.black.withAlphaComponent(0.3).cgColor)
+            trimmed.draw(in: drawRect)
+            cgCtx.restoreGState()
+
+            // 人物本体
+            trimmed.draw(in: drawRect)
+
+            // 绿色轮廓线
+            if showContour, let contour = contourImage {
+                contour.draw(in: drawRect)
+            }
+        }
+
+        guard let pngData = finalImage.pngData() else {
+            saveMessage = "保存失败"
             showSaveAlert = true
             return
         }
 
-        let refinedMaskImage = UIImage(cgImage: refinedMaskCG)
+        // 保存到相册
+        UIImageWriteToSavedPhotosAlbum(finalImage, nil, nil, nil)
 
-        // 用精修后的遮罩重新合成
-        guard let origCG = original.cgImage else {
-            saveMessage = "自动精修失败：原图数据异常"
-            showSaveAlert = true
-            return
-        }
-        let origCI = CIImage(cgImage: origCG)
+        // 同时保存到桌面
+        let timestamp = Int(Date().timeIntervalSince1970)
+        let desktopPath = "/Users/jiangbo/Desktop/SmartMatting_\(timestamp).png"
+        try? pngData.write(to: URL(fileURLWithPath: desktopPath))
 
-        // CPU 逐像素合成
-        guard let result = blendWithMaskCPU(image: origCI, mask: refinedMask) else {
-            saveMessage = "自动精修失败：合成出错"
-            showSaveAlert = true
-            return
-        }
-        resultImage = UIImage(cgImage: result)
-        // 更新 lastResultCGImage 以便保存
-        MattingEngine.lastResultCGImage = result
-        // 锁定 alpha
-        if let data = resultImage?.pngData(), let locked = UIImage(data: data) {
-            resultImage = locked
-        }
-        MattingEngine.lastMaskImage = refinedMaskImage
-        
-        saveMessage = "自动精修完成 ✅"
+        saveMessage = "已保存到相册和桌面"
         showSaveAlert = true
     }
 
-    /// CPU 逐像素合成：把遮罩灰度值写入 alpha 通道
-    private func blendWithMaskCPU(image: CIImage, mask: CIImage) -> CGImage? {
-        let ctx = CIContext()
-        guard let cgImage = ctx.createCGImage(image, from: image.extent),
-              let cgMask = ctx.createCGImage(mask, from: mask.extent) else { return nil }
+    /// 给人物加外发光 + 轮廓线，增强立体感
+    func mergeContour(base: UIImage, contour: UIImage) -> UIImage? {
+        let size = base.size
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = base.scale
+        fmt.opaque = false
+        return UIGraphicsImageRenderer(size: size, format: fmt).image { ctx in
+            let cgCtx = ctx.cgContext
+            let rect = CGRect(origin: .zero, size: size)
 
-        let w = cgImage.width, h = cgImage.height
-        guard let imgCtx = CGContext(data: nil, width: w, height: h,
-            bitsPerComponent: 8, bytesPerRow: w * 4,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-        imgCtx.draw(cgImage, in: CGRect(x: 0, y: 0, width: w, height: h))
+            // 1. 外发光层（白色，大模糊）——让人物边缘发光
+            cgCtx.saveGState()
+            cgCtx.setShadow(offset: .zero, blur: 20, color: UIColor.white.withAlphaComponent(0.6).cgColor)
+            base.draw(in: rect)
+            cgCtx.restoreGState()
 
-        guard let maskCtx = CGContext(data: nil, width: w, height: h,
+            // 2. 投影（右下偏移）——增加深度
+            cgCtx.saveGState()
+            cgCtx.setShadow(offset: CGSize(width: 3, height: 5), blur: 10, color: UIColor.black.withAlphaComponent(0.35).cgColor)
+            base.draw(in: rect)
+            cgCtx.restoreGState()
+
+            // 3. 人物本体
+            base.draw(in: rect)
+
+            // 4. 绿色轮廓线
+            contour.draw(in: rect)
+        }
+    }
+
+    /// 裁剪图片到非透明区域的边界
+    func trimToContent(_ image: UIImage) -> UIImage? {
+        guard let cg = image.cgImage else { return nil }
+        let w = cg.width, h = cg.height
+
+        // 读取 alpha 通道找边界
+        guard let ctx = CGContext(data: nil, width: w, height: h,
             bitsPerComponent: 8, bytesPerRow: w,
             space: CGColorSpaceCreateDeviceGray(),
             bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
-        maskCtx.draw(cgMask, in: CGRect(x: 0, y: 0, width: w, height: h))
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let data = ctx.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: w * h)
 
-        guard let imgData = imgCtx.data, let maskData = maskCtx.data else { return nil }
-        let imgPixels = imgData.bindMemory(to: UInt8.self, capacity: w * h * 4)
-        let maskPixels = maskData.bindMemory(to: UInt8.self, capacity: w * h)
-
-        for i in 0..<(w * h) {
-            imgPixels[i * 4 + 3] = maskPixels[i]
+        var minX = w, maxX = 0, minY = h, maxY = 0
+        for y in 0..<h {
+            for x in 0..<w {
+                if pixels[y * w + x] > 10 {
+                    if x < minX { minX = x }
+                    if x > maxX { maxX = x }
+                    if y < minY { minY = y }
+                    if y > maxY { maxY = y }
+                }
+            }
         }
 
-        return imgCtx.makeImage()
-    }
+        guard minX <= maxX, minY <= maxY else { return image }
 
-    func saveToAlbum() {
-        // 优先用 segmentPerson 保存的原始 CGImage
-        let cgImage: CGImage? = MattingEngine.lastResultCGImage ?? resultImage?.cgImage
-        guard let cg = cgImage else {
-            saveMessage = "保存失败"
-            showSaveAlert = true
-            return
-        }
+        // 留一点边距（8px）
+        let pad: CGFloat = 8
+        let cropRect = CGRect(
+            x: max(0, CGFloat(minX) - pad),
+            y: max(0, CGFloat(minY) - pad),
+            width: min(CGFloat(w) - CGFloat(minX) + pad, CGFloat(maxX - minX) + pad * 2),
+            height: min(CGFloat(h) - CGFloat(minY) + pad, CGFloat(maxY - minY) + pad * 2)
+        )
 
-        // 用 CGImageDestination 直接从 CGImage 写 PNG
-        let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data as CFMutableData, "public.png" as CFString, 1, nil) else {
-            saveMessage = "保存失败"
-            showSaveAlert = true
-            return
-        }
-        CGImageDestinationAddImage(dest, cg, nil)
-        guard CGImageDestinationFinalize(dest) else {
-            saveMessage = "保存失败"
-            showSaveAlert = true
-            return
-        }
-
-        let docsPath = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
-        try? (data as Data).write(to: URL(fileURLWithPath: docsPath + "/saved_transparent.png"))
-        saveMessage = "已保存"
-        showSaveAlert = true
+        guard let cropped = cg.cropping(to: cropRect) else { return image }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
     }
 
     func applyFilter() {
@@ -1106,6 +1182,7 @@ struct ContentView: View {
         selectedItem = nil
         selectedBackground = .transparent
         foregroundImage = nil
+        contourImage = nil
         MattingEngine.lastMaskImage = nil
         isProcessing = false
         retryCount = 0
@@ -1173,6 +1250,117 @@ enum FilterOption: String, CaseIterable, Identifiable {
         return UIImage(cgImage: cg)
     }
 }
+
+    // MARK: - 轮廓线生成
+
+    /// 从前景图（带 alpha）提取轮廓线
+    func generateContour(from foreground: UIImage) -> UIImage? {
+        guard let cg = foreground.cgImage else { return nil }
+        let w = cg.width, h = cg.height
+
+        // 1. 提取 alpha 通道
+        guard let maskCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        maskCtx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let maskCG = maskCtx.makeImage() else { return nil }
+
+        // 2. 用 CIImage 做大半径形态学处理，把内部空洞全部填平
+        var maskCI = CIImage(cgImage: maskCG)
+        if let binarized = MattingEngine.binarizeMask(maskCI) { maskCI = binarized }
+        // 大幅膨胀把内部全填实
+        if let d1 = MattingEngine.morph(maskCI, r: 15.0, dilate: true) { maskCI = d1 }
+        // 再腐蚀回来
+        if let e1 = MattingEngine.morph(maskCI, r: 15.0, dilate: false) { maskCI = e1 }
+        if let binarized = MattingEngine.binarizeMask(maskCI) { maskCI = binarized }
+
+        // 渲染处理后的遮罩
+        guard let cleanMaskCG = CIContext().createCGImage(maskCI, from: maskCI.extent) else { return nil }
+        guard let cleanCtx = CGContext(data: nil, width: w, height: h,
+            bitsPerComponent: 8, bytesPerRow: w,
+            space: CGColorSpaceCreateDeviceGray(),
+            bitmapInfo: CGImageAlphaInfo.none.rawValue) else { return nil }
+        cleanCtx.draw(cleanMaskCG, in: CGRect(x: 0, y: 0, width: w, height: h))
+        guard let cleanData = cleanCtx.data else { return nil }
+        let cleanPixels = cleanData.bindMemory(to: UInt8.self, capacity: w * h)
+
+        // 3. 边缘检测
+        var edgePixels = [UInt8](repeating: 0, count: w * h)
+        for y in 0..<h {
+            for x in 0..<w {
+                let idx = y * w + x
+                if cleanPixels[idx] < 128 { continue }
+                var isEdge = false
+                for dy in -1...1 {
+                    for dx in -1...1 {
+                        if dx == 0 && dy == 0 { continue }
+                        let nx = x + dx, ny = y + dy
+                        guard nx >= 0, nx < w, ny >= 0, ny < h else { isEdge = true; break }
+                        if cleanPixels[ny * w + nx] < 128 { isEdge = true; break }
+                    }
+                    if isEdge { break }
+                }
+                edgePixels[idx] = isEdge ? 255 : 0
+            }
+        }
+
+        // 4. 渲染彩色轮廓线
+        let lineWidth = max(2.5, CGFloat(max(w, h)) / 250)
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = foreground.scale
+        return UIGraphicsImageRenderer(size: foreground.size, format: fmt).image { ctx in
+            let cgCtx = ctx.cgContext
+            cgCtx.setStrokeColor(UIColor(red: 0.2, green: 0.9, blue: 0.2, alpha: 0.85).cgColor)
+            cgCtx.setLineWidth(lineWidth)
+            cgCtx.setLineCap(.round)
+            cgCtx.setLineJoin(.round)
+
+            // 画水平线段
+            for y in 0..<h {
+                var runStart: Int?
+                for x in 0..<w {
+                    if edgePixels[y * w + x] > 128 {
+                        if runStart == nil { runStart = x }
+                    } else {
+                        if let start = runStart, x - start > 0 {
+                            cgCtx.move(to: CGPoint(x: start, y: y))
+                            cgCtx.addLine(to: CGPoint(x: x - 1, y: y))
+                            cgCtx.strokePath()
+                            runStart = nil
+                        } else { runStart = nil }
+                    }
+                }
+                if let start = runStart, w - start > 0 {
+                    cgCtx.move(to: CGPoint(x: start, y: y))
+                    cgCtx.addLine(to: CGPoint(x: w - 1, y: y))
+                    cgCtx.strokePath()
+                }
+            }
+
+            // 画竖直线段
+            for x in 0..<w {
+                var runStart: Int?
+                for y in 0..<h {
+                    if edgePixels[y * w + x] > 128 {
+                        if runStart == nil { runStart = y }
+                    } else {
+                        if let start = runStart, y - start > 0 {
+                            cgCtx.move(to: CGPoint(x: x, y: start))
+                            cgCtx.addLine(to: CGPoint(x: x, y: y - 1))
+                            cgCtx.strokePath()
+                            runStart = nil
+                        } else { runStart = nil }
+                    }
+                }
+                if let start = runStart, h - start > 0 {
+                    cgCtx.move(to: CGPoint(x: x, y: start))
+                    cgCtx.addLine(to: CGPoint(x: x, y: h - 1))
+                    cgCtx.strokePath()
+                }
+            }
+        }
+    }
 }
 
 extension Array {
